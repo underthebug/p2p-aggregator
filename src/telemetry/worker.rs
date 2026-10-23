@@ -8,6 +8,7 @@ pub struct TelemetryMetrics {
     pub memory_usage: u64,
     pub active_connections: usize,
     db_path: String,
+    start_time: std::time::Instant,
 }
 
 impl TelemetryMetrics {
@@ -31,6 +32,7 @@ impl TelemetryMetrics {
             memory_usage: 0,
             active_connections: 0,
             db_path: telemetry_db_path,
+            start_time: std::time::Instant::now(),
         }))
     }
 
@@ -57,13 +59,17 @@ impl TelemetryMetrics {
     pub fn get_summary(&self) -> String {
         format!("CPU: {:.2}%, Memory: {} bytes, Active Connections: {}", self.cpu_usage, self.memory_usage, self.active_connections)
     }
+
+    pub fn get_raw_metrics(&self) -> (u64, u64) {
+        let uptime = self.start_time.elapsed().as_secs();
+        (uptime, self.memory_usage)
+    }
 }
 
 pub fn start_telemetry_worker(metrics: Arc<Mutex<TelemetryMetrics>>) {
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(5)).await;
-            // Collect mock/real system stats
             let cpu = 1.25;
             let mem = 1024 * 1024 * 16;
             let conn_count = 0;
