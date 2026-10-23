@@ -7,6 +7,7 @@ use telemetry::worker::{start_telemetry_worker, TelemetryMetrics};
 use peer::bootstrap::load_bootstrap_nodes;
 use peer::manager::PeerManager;
 use peer::server::start_p2p_listener;
+use peer::heartbeat::start_peer_heartbeat;
 use std::sync::Arc;
 
 #[tokio::main]
@@ -33,6 +34,10 @@ async fn main() -> std::io::Result<()> {
     let telemetry = TelemetryMetrics::new();
     start_telemetry_worker(Arc::clone(&telemetry));
     println!("Background telemetry worker started.");
+
+    // Start background peer heartbeat and health check worker (every 30 seconds)
+    start_peer_heartbeat(Arc::clone(&peer_manager), 30);
+    println!("Background peer heartbeat worker started.");
 
     // Start inbound P2P TCP listener on port 4001
     let p2p_bind_addr = "0.0.0.0:4001";

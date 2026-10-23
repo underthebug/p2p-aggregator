@@ -42,6 +42,15 @@ impl PeerManager {
         }
     }
 
+    pub fn remove_peer(&self, peer_addr: &str) {
+        let mut peers = self.connected_peers.lock().unwrap();
+        if peers.remove(peer_addr) {
+            if let Some(ref s) = self.store {
+                let _ = s.remove_peer(peer_addr);
+            }
+        }
+    }
+
     pub fn get_peer_count(&self) -> usize {
         let peers = self.connected_peers.lock().unwrap();
         peers.len()

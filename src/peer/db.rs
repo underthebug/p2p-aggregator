@@ -34,6 +34,12 @@ impl PeerStore {
         Ok(())
     }
 
+    pub fn remove_peer(&self, address: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM peers WHERE address = ?1", rusqlite::params![address])?;
+        Ok(())
+    }
+
     pub fn load_peers(&self) -> Result<Vec<String>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT address FROM peers")?;
