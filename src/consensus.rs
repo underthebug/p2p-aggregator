@@ -121,3 +121,46 @@ impl ConsensusEngine {
         }
     }
 }
+use tokio::net::TcpStream;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+impl ConsensusEngine {
+    pub async fn broadcast_append_entries(
+        peer_addr: String,
+        term: u64,
+        leader_id: String,
+        entries: Vec<LogEntry>,
+        commit_index: u64,
+    ) -> std::io::Result<bool> {
+        let mut socket = TcpStream::connect(&peer_addr).await?;
+
+        // 1. Send our public key (32 bytes) or handshake identity stub if needed
+        // For now, let's dispatch the serialized Raft message over the authenticated stream
+        let msg = RaftMessage::AppendEntries {
+            term,
+            leader_id,
+            prev_log_index: 0,
+            prev_log_term: 0,
+            entries,
+            leader_commit: commit_index,
+        };
+
+        let payload = bincode::serialize(&msg).unwrap();
+        let len_header = (payload.len() as u32).to_be_bytes();
+
+        socket.write_all(&len_header).await?;
+        socket.write_all(&payload).await?;
+
+        let mut resp_len_buf = [0u8; 4];
+        socket.read_exact(&mut resp_len_buf).await?;
+        let resp_len = u32::from_be_bytes(resp_len_buf) as usize;
+        let mut resp_buf = vec![0u8; resp_len];
+        socket.read_exact(&mut resp_buf).await?;
+
+        if let Ok(RaftMessage::AppendEntriesResponse { success, .. }) = bincode::deserialize(&resp_buf) {
+            return Ok(success);
+        }
+
+        Ok(false)
+    }
+}
