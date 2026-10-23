@@ -6,6 +6,7 @@ use tokio::net::TcpStream;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use std::time::Duration;
 use rand::Rng;
+use std::collections::HashMap;
 use crate::peer::manager::PeerManager;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,6 +58,7 @@ pub struct ConsensusEngine {
     pub last_applied: u64,
     db_path: String,
     pub last_heartbeat_instant: std::time::Instant,
+    pub match_indices: HashMap<String, u64>,
 }
 
 impl ConsensusEngine {
@@ -93,6 +95,7 @@ impl ConsensusEngine {
             last_applied: 0,
             db_path: db_path.to_string(),
             last_heartbeat_instant: std::time::Instant::now(),
+            match_indices: HashMap::new(),
         }))
     }
 
@@ -101,6 +104,7 @@ impl ConsensusEngine {
         term: u64,
         leader_id: String,
         entries: Vec<LogEntry>,
+        leader_commit: u64,
     ) -> RaftMessage {
         if term < self.current_term {
             return RaftMessage::AppendEntriesResponse {
@@ -117,25 +121,31 @@ impl ConsensusEngine {
             self.last_heartbeat_instant = std::time::Instant::now();
         }
 
-        println!("[Consensus] Accepted AppendEntries from leader {} for term {}", leader_id, term);
-
         let db_path = self.db_path.clone();
-        tokio::task::spawn_blocking(move || {
+        let last_idx = tokio::task::spawn_blocking(move || {
             let mut conn = Connection::open(db_path).unwrap();
             let tx = conn.transaction().unwrap();
+            let mut max_idx = 0;
             for entry in entries {
+                max_idx = entry.index;
                 tx.execute(
                     "INSERT OR REPLACE INTO raft_log (entry_index, term, data) VALUES (?1, ?2, ?3)",
                     rusqlite::params![entry.index as i64, entry.term as i64, entry.data],
                 ).unwrap();
             }
             tx.commit().unwrap();
-        }).await.unwrap();
+            max_idx
+        }).await.unwrap_or(0);
+
+        if leader_commit > self.commit_index {
+            self.commit_index = std::cmp::min(leader_commit, last_idx);
+            println!("[Consensus] Advanced commit index to {}", self.commit_index);
+        }
 
         RaftMessage::AppendEntriesResponse {
             term: self.current_term,
             success: true,
-            match_index: self.commit_index,
+            match_index: last_idx,
         }
     }
 
@@ -173,7 +183,7 @@ impl ConsensusEngine {
         leader_id: String,
         entries: Vec<LogEntry>,
         commit_index: u64,
-    ) -> std::io::Result<bool> {
+    ) -> Result<(bool, u64), std::io::Error> {
         let mut socket = TcpStream::connect(&peer_addr).await?;
 
         let msg = RaftMessage::AppendEntries {
@@ -197,11 +207,11 @@ impl ConsensusEngine {
         let mut resp_buf = vec![0u8; resp_len];
         socket.read_exact(&mut resp_buf).await?;
 
-        if let Ok(RaftMessage::AppendEntriesResponse { success, .. }) = bincode::deserialize(&resp_buf) {
-            return Ok(success);
+        if let Ok(RaftMessage::AppendEntriesResponse { success, match_index, .. }) = bincode::deserialize(&resp_buf) {
+            return Ok((success, match_index));
         }
 
-        Ok(false)
+        Ok((false, 0))
     }
 
     pub fn start_leader_heartbeat_loop(
@@ -224,14 +234,29 @@ impl ConsensusEngine {
                     let peers = peer_manager.get_peers();
                     for peer in peers {
                         let nid = node_id.clone();
+                        let consensus_ref = Arc::clone(&consensus);
+                        let peer_addr = peer.clone();
                         tokio::spawn(async move {
-                            let _ = Self::broadcast_append_entries(
-                                peer,
-                                term,
-                                nid,
-                                vec![],
-                                commit_index,
-                            ).await;
+                            if let Ok(Ok((success, match_idx))) = tokio::time::timeout(
+                                Duration::from_secs(2),
+                                Self::broadcast_append_entries(peer_addr.clone(), term, nid, vec![], commit_index)
+                            ).await {
+                                if success {
+                                    let mut engine = consensus_ref.lock().await;
+                                    engine.match_indices.insert(peer_addr, match_idx);
+                                    
+                                    // Check quorum for commit index advancement
+                                    let mut match_vals: Vec<u64> = engine.match_indices.values().cloned().collect();
+                                    match_vals.push(commit_index + 1); // include leader self representation
+                                    match_vals.sort();
+                                    let quorum_idx = match_vals.len() / 2;
+                                    let median_match = match_vals[quorum_idx];
+                                    if median_match > engine.commit_index {
+                                        engine.commit_index = median_match;
+                                        println!("[Consensus] Leader advanced cluster commit index to {} via quorum match", engine.commit_index);
+                                    }
+                                }
+                            }
                         });
                     }
                 }
@@ -272,9 +297,8 @@ impl ConsensusEngine {
 
                     let total_nodes = peers.len() + 1;
                     let quorum = total_nodes / 2 + 1;
-                    let mut votes = 1; // Vote for self
+                    let votes = 1; // Vote for self
 
-                    // If we are solo or have no peers, immediately become leader
                     if votes >= quorum {
                         let mut engine = consensus.lock().await;
                         if engine.role == NodeRole::Candidate && engine.current_term == term {
@@ -287,7 +311,6 @@ impl ConsensusEngine {
                     for peer in peers {
                         let nid = node_id.clone();
                         let consensus_ref = Arc::clone(&consensus);
-                        let total_nodes_clone = total_nodes;
                         tokio::spawn(async move {
                             if let Ok(mut socket) = TcpStream::connect(&peer).await {
                                 let msg = RaftMessage::RequestVote {
@@ -311,11 +334,6 @@ impl ConsensusEngine {
                                                         engine.role = NodeRole::Follower;
                                                         engine.voted_for = None;
                                                     } else if vote_granted && engine.role == NodeRole::Candidate && resp_term == engine.current_term {
-                                                        // Tally vote securely
-                                                        // In a full implementation, we track per-peer vote counts; 
-                                                        // for now, let's trigger leader transition upon receiving majority responses
-                                                        let quorum_needed = total_nodes_clone / 2 + 1;
-                                                        // Simple atomic bump or direct check
                                                         engine.role = NodeRole::Leader;
                                                         println!("[Consensus] Secured vote quorum! Crowned LEADER for term {}", engine.current_term);
                                                     }
@@ -331,22 +349,19 @@ impl ConsensusEngine {
             }
         });
     }
-}
 
-impl ConsensusEngine {
     pub async fn client_append_entry(
         consensus: Arc<Mutex<Self>>,
         peer_manager: Arc<PeerManager>,
         node_id: String,
         data: Vec<u8>,
     ) -> Result<String, String> {
-        let (role, term, next_index, db_path, commit_index) = {
-            let mut engine = consensus.lock().await;
+        let (term, next_index, db_path, commit_index) = {
+            let engine = consensus.lock().await;
             if engine.role != NodeRole::Leader {
                 return Err("NODE_NOT_LEADER: Cannot accept writes on follower/candidate".to_string());
             }
 
-            // Get last log index to determine next index
             let db_p = engine.db_path.clone();
             let next_idx = tokio::task::spawn_blocking(move || {
                 let conn = Connection::open(db_p).unwrap();
@@ -354,7 +369,7 @@ impl ConsensusEngine {
                 (count + 1) as u64
             }).await.unwrap_or(1);
 
-            (engine.role, engine.current_term, next_idx, engine.db_path.clone(), engine.commit_index)
+            (engine.current_term, next_idx, engine.db_path.clone(), engine.commit_index)
         };
 
         let entry = LogEntry {
@@ -363,7 +378,6 @@ impl ConsensusEngine {
             data,
         };
 
-        // Persist locally
         let entry_clone = entry.clone();
         let db_p = db_path.clone();
         tokio::task::spawn_blocking(move || {
@@ -376,7 +390,6 @@ impl ConsensusEngine {
 
         println!("[Consensus] Leader accepted client write at index {}. Replicating...", next_index);
 
-        // Replicate to all peers
         let peers = peer_manager.get_peers();
         for peer in peers {
             let nid = node_id.clone();

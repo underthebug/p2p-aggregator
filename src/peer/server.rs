@@ -70,9 +70,9 @@ pub async fn start_p2p_listener(
 
                                 if let Ok(raft_msg) = bincode::deserialize::<RaftMessage>(&msg_buf) {
                                     let response = match raft_msg {
-                                        RaftMessage::AppendEntries { term, leader_id, entries, .. } => {
+                                        RaftMessage::AppendEntries { term, leader_id, entries, leader_commit, .. } => {
                                             let mut engine = consensus.lock().await;
-                                            engine.handle_append_entries(term, leader_id, entries).await
+                                            engine.handle_append_entries(term, leader_id, entries, leader_commit).await
                                         }
                                         RaftMessage::RequestVote { term, candidate_id, last_log_index, last_log_term } => {
                                             let mut engine = consensus.lock().await;
