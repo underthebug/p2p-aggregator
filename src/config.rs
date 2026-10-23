@@ -1,8 +1,8 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct Config {
     pub database_path: String,
     pub ipc_socket_path: String,
