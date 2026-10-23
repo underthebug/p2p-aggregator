@@ -43,3 +43,5 @@ pub async fn start_socket_listener(socket_path: &str, db_path: &str) -> Result<(
 
     Ok(())
 }
+
+// TODO: Add support for dynamic peer connection and runtime log-level adjustments
