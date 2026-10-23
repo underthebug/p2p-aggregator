@@ -56,7 +56,7 @@ async fn main() -> std::io::Result<()> {
         node_id.clone(),
     );
 
-    let telemetry = TelemetryMetrics::new();
+    let telemetry = TelemetryMetrics::new(&config.database_path);
     start_telemetry_worker(Arc::clone(&telemetry));
 
     start_metrics_exporter(&config.metrics_bind_addr, Arc::clone(&peer_manager), Arc::clone(&telemetry)).await?;
