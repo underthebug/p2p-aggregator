@@ -1,6 +1,7 @@
 pub mod cli;
 pub mod config;
 pub mod crypto;
+pub mod consensus;
 pub mod ipc;
 pub mod telemetry;
 pub mod peer;
