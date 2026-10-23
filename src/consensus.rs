@@ -1,18 +1,45 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use rusqlite::Connection;
+use serde::{Serialize, Deserialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NodeRole {
     Follower,
     Candidate,
     Leader,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogEntry {
+    pub term: u64,
+    pub index: u64,
+    pub data: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum RaftMessage {
+    AppendEntries {
+        term: u64,
+        leader_id: String,
+        prev_log_index: u64,
+        prev_log_term: u64,
+        entries: Vec<LogEntry>,
+        leader_commit: u64,
+    },
+    AppendEntriesResponse {
+        term: u64,
+        success: bool,
+        match_index: u64,
+    },
+}
+
 pub struct ConsensusEngine {
     pub current_term: u64,
     pub voted_for: Option<String>,
     pub role: NodeRole,
+    pub commit_index: u64,
+    pub last_applied: u64,
     db_path: String,
 }
 
@@ -27,7 +54,15 @@ impl ConsensusEngine {
             [],
         ).unwrap();
 
-        // Load or initialize term
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS raft_log (
+                entry_index INTEGER PRIMARY KEY,
+                term INTEGER NOT NULL,
+                data BLOB NOT NULL
+            )",
+            [],
+        ).unwrap();
+
         let term: u64 = conn.query_row(
             "SELECT value FROM consensus_state WHERE key = 'current_term'",
             [],
@@ -38,19 +73,9 @@ impl ConsensusEngine {
             current_term: term,
             voted_for: None,
             role: NodeRole::Follower,
+            commit_index: 0,
+            last_applied: 0,
             db_path: db_path.to_string(),
         }))
-    }
-
-    pub async fn persist_term(&self) {
-        let db_path = self.db_path.clone();
-        let term = self.current_term;
-        tokio::task::spawn_blocking(move || {
-            let conn = Connection::open(db_path).unwrap();
-            conn.execute(
-                "INSERT OR REPLACE INTO consensus_state (key, value) VALUES ('current_term', ?1)",
-                [term.to_string()],
-            ).unwrap();
-        }).await.unwrap();
     }
 }
