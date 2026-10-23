@@ -1,5 +1,5 @@
-#[tokio::test]
-async fn test_metrics_endpoint() {
-    // Start daemon or verify client connection logic
+#[test]
+fn test_metrics_endpoint() {
+    // Basic placeholder integration test for metrics HTTP endpoint
     assert!(true);
 }
