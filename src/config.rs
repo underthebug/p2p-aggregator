@@ -1,53 +1,42 @@
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::fs;
-use std::path::Path;
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct Config {
-    pub database_path: String,
-    pub ipc_socket_path: String,
     pub p2p_bind_addr: String,
     pub metrics_bind_addr: String,
+    pub ipc_socket_path: String,
+    pub database_path: String,
     pub heartbeat_interval_secs: u64,
     pub bootstrap_nodes: Vec<String>,
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        let db_path = if fs::metadata("/var/lib/p2p-aggregator").is_ok() {
-            "/var/lib/p2p-aggregator/peers.db".to_string()
-        } else {
-            "peers.db".to_string()
+impl Config {
+    pub fn load(path: &str) -> Self {
+        let contents = match fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => {
+                return Self {
+                    p2p_bind_addr: "0.0.0.0:40827".to_string(),
+                    metrics_bind_addr: "0.0.0.0:9090".to_string(),
+                    ipc_socket_path: "/run/p2p-aggregator/p2p-aggregator.sock".to_string(),
+                    database_path: "./data/aggregator.db".to_string(),
+                    heartbeat_interval_secs: 2,
+                    bootstrap_nodes: vec![],
+                };
+            }
         };
 
-        Self {
-            database_path: db_path,
-            ipc_socket_path: "/tmp/agent_swarm.sock".to_string(),
-            p2p_bind_addr: "0.0.0.0:4001".to_string(),
-            metrics_bind_addr: "0.0.0.0:9090".to_string(),
-            heartbeat_interval_secs: 30,
-            bootstrap_nodes: vec![
-                "/ip4/127.0.0.1/tcp/4001".to_string(),
-            ],
-        }
-    }
-}
-
-impl Config {
-    pub fn load<P: AsRef<Path>>(path: P) -> Self {
-        if let Ok(contents) = fs::read_to_string(path) {
-            if let Ok(config) = toml::from_str(&contents) {
-                println!("Loaded configuration from config.toml");
-                return config;
-            } else {
-                eprintln!("Failed to parse config.toml, falling back to defaults.");
+        toml::from_str(&contents).unwrap_or_else(|e| {
+            eprintln!("Failed to parse config from {}: {}. Using defaults.", path, e);
+            Self {
+                p2p_bind_addr: "0.0.0.0:40827".to_string(),
+                metrics_bind_addr: "0.0.0.0:9090".to_string(),
+                ipc_socket_path: "/run/p2p-aggregator/p2p-aggregator.sock".to_string(),
+                database_path: "./data/aggregator.db".to_string(),
+                heartbeat_interval_secs: 2,
+                bootstrap_nodes: vec![],
             }
-        } else {
-            let default_cfg = Self::default();
-            if let Ok(toml_str) = toml::to_string_pretty(&default_cfg) {
-                let _ = fs::write("config.toml", toml_str);
-            }
-        }
-        Self::default()
+        })
     }
 }
