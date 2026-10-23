@@ -40,6 +40,16 @@ async fn main() -> std::io::Result<()> {
         peer_manager.add_peer(node.clone());
     }
 
+    let identity = Arc::new(crypto::NodeIdentity::load_or_generate("node.key"));
+    let node_id = hex::encode(identity.verifying_key.to_bytes());
+
+    ConsensusEngine::start_leader_heartbeat_loop(
+        Arc::clone(&consensus),
+        Arc::clone(&peer_manager),
+        node_id,
+        config.heartbeat_interval_secs,
+    );
+
     let telemetry = TelemetryMetrics::new();
     start_telemetry_worker(Arc::clone(&telemetry));
 

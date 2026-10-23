@@ -164,3 +164,42 @@ impl ConsensusEngine {
         Ok(false)
     }
 }
+use crate::peer::manager::PeerManager;
+use std::time::Duration;
+
+impl ConsensusEngine {
+    pub fn start_leader_heartbeat_loop(
+        consensus: Arc<Mutex<Self>>,
+        peer_manager: Arc<PeerManager>,
+        node_id: String,
+        interval_secs: u64,
+    ) {
+        tokio::spawn(async move {
+            let interval = Duration::from_secs(interval_secs);
+            loop {
+                tokio::time::sleep(interval).await;
+                
+                let (role, term, commit_index) = {
+                    let engine = consensus.lock().await;
+                    (engine.role, engine.current_term, engine.commit_index)
+                };
+
+                if role == NodeRole::Leader {
+                    let peers = peer_manager.get_peers();
+                    for peer in peers {
+                        let nid = node_id.clone();
+                        tokio::spawn(async move {
+                            let _ = Self::broadcast_append_entries(
+                                peer,
+                                term,
+                                nid,
+                                vec![],
+                                commit_index,
+                            ).await;
+                        });
+                    }
+                }
+            }
+        });
+    }
+}
