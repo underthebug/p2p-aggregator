@@ -5,6 +5,7 @@ mod consensus;
 mod ipc;
 mod telemetry;
 mod peer;
+mod journal;
 
 use clap::Parser;
 use cli::Cli;
@@ -19,7 +20,7 @@ use peer::heartbeat::start_peer_heartbeat;
 use std::sync::Arc;
 
 #[tokio::main]
-async fn main() -> std::io::Result<()> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== P2P Aggregator Daemon Starting ===");
     
     let args = Cli::parse();
@@ -32,6 +33,9 @@ async fn main() -> std::io::Result<()> {
         config.p2p_bind_addr = format!("0.0.0.0:{}", port);
     }
     
+    let rocks_path = format!("{}_rocks", config.database_path);
+    let _telemetry_db = journal::rocks::init_telemetry_db(&rocks_path)?;
+
     let peer_manager = Arc::new(PeerManager::with_store(&config.database_path));
     let consensus = ConsensusEngine::new(&config.database_path);
     println!("Consensus engine initialized (Term: {}, Role: Follower)", consensus.lock().await.current_term);
