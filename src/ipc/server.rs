@@ -2,9 +2,11 @@ use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::fs;
 use std::path::Path;
-use crate::ipc::commands::{IpcCommand, handle_command};
+use std::sync::Arc;
+use crate::ipc::commands::{IpcCommand, handle_command_with_peers};
+use crate::peer::manager::PeerManager;
 
-fn handle_client(mut stream: UnixStream) {
+fn handle_client(mut stream: UnixStream, peer_manager: Arc<PeerManager>) {
     let mut buffer = [0; 512];
     match stream.read(&mut buffer) {
         Ok(n) if n > 0 => {
@@ -21,14 +23,14 @@ fn handle_client(mut stream: UnixStream) {
                 IpcCommand::Unknown(c) => println!("Processed Command: unknown ({})", c.trim()),
             }
 
-            let response = handle_command(&request);
+            let response = handle_command_with_peers(&request, &peer_manager);
             let _ = stream.write_all(response.as_bytes());
         }
         _ => {}
     }
 }
 
-pub fn start_ipc_server(socket_path: &str) -> std::io::Result<()> {
+pub fn start_ipc_server(socket_path: &str, peer_manager: Arc<PeerManager>) -> std::io::Result<()> {
     if Path::new(socket_path).exists() {
         fs::remove_file(socket_path)?;
     }
@@ -40,7 +42,7 @@ pub fn start_ipc_server(socket_path: &str) -> std::io::Result<()> {
         for stream in listener.incoming() {
             match stream {
                 Ok(stream) => {
-                    handle_client(stream);
+                    handle_client(stream, Arc::clone(&peer_manager));
                 }
                 Err(e) => {
                     eprintln!("IPC connection failed: {}", e);
