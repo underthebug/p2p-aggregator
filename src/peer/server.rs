@@ -3,8 +3,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use std::sync::Arc;
 use crate::peer::manager::PeerManager;
 use crate::crypto::NodeIdentity;
-use rand_core::OsRng;
-use rand::RngCore;
 
 pub async fn start_p2p_listener(bind_addr: &str, peer_manager: Arc<PeerManager>) -> std::io::Result<()> {
     let listener = TcpListener::bind(bind_addr).await?;
@@ -34,8 +32,9 @@ pub async fn start_p2p_listener(bind_addr: &str, peer_manager: Arc<PeerManager>)
 
                         // 3. Generate and send random challenge nonce (32 bytes)
                         let mut challenge = [0u8; 32];
-                        let mut rng = OsRng;
-                        rng.fill_bytes(&mut challenge);
+                        if getrandom::getrandom(&mut challenge).is_err() {
+                            return;
+                        }
                         if socket.write_all(&challenge).await.is_err() {
                             return;
                         }

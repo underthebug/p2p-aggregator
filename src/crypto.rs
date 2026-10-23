@@ -1,5 +1,4 @@
 use ed25519_dalek::{SigningKey, VerifyingKey, Signer, Signature, Verifier};
-use rand_core::OsRng;
 use std::fs;
 use std::path::Path;
 
@@ -18,13 +17,19 @@ impl NodeIdentity {
                     key_bytes.copy_from_slice(&bytes);
                     SigningKey::from_bytes(&key_bytes)
                 } else {
-                    SigningKey::generate(&mut OsRng)
+                    let mut key_bytes = [0u8; 32];
+                    getrandom::getrandom(&mut key_bytes).unwrap();
+                    SigningKey::from_bytes(&key_bytes)
                 }
             } else {
-                SigningKey::generate(&mut OsRng)
+                let mut key_bytes = [0u8; 32];
+                getrandom::getrandom(&mut key_bytes).unwrap();
+                SigningKey::from_bytes(&key_bytes)
             }
         } else {
-            let key = SigningKey::generate(&mut OsRng);
+            let mut key_bytes = [0u8; 32];
+            getrandom::getrandom(&mut key_bytes).unwrap();
+            let key = SigningKey::from_bytes(&key_bytes);
             if let Some(parent) = path.parent() {
                 let _ = fs::create_dir_all(parent);
             }
