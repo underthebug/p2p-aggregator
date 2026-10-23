@@ -101,10 +101,9 @@ impl ConsensusEngine {
 
         println!("[Consensus] Accepted AppendEntries from leader {} for term {}", leader_id, term);
 
-        // Store entries in SQLite WAL log
         let db_path = self.db_path.clone();
         tokio::task::spawn_blocking(move || {
-            let conn = Connection::open(db_path).unwrap();
+            let mut conn = Connection::open(db_path).unwrap();
             let tx = conn.transaction().unwrap();
             for entry in entries {
                 tx.execute(
