@@ -3,7 +3,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
-use crate::ipc::commands::{IpcCommand, handle_command_with_peers};
+use crate::ipc::commands::{IpcCommand, handle_command_with_peers_async};
 use crate::peer::manager::PeerManager;
 
 fn handle_client(mut stream: UnixStream, peer_manager: Arc<PeerManager>) {
@@ -13,7 +13,6 @@ fn handle_client(mut stream: UnixStream, peer_manager: Arc<PeerManager>) {
             let request = String::from_utf8_lossy(&buffer[..n]);
             let command = IpcCommand::from_str(&request).unwrap_or_else(|_| IpcCommand::Unknown(request.to_string()));
             
-            // Log processed command type
             match &command {
                 IpcCommand::Status => println!("Processed Command: status"),
                 IpcCommand::Peers => println!("Processed Command: peers"),
@@ -23,8 +22,13 @@ fn handle_client(mut stream: UnixStream, peer_manager: Arc<PeerManager>) {
                 IpcCommand::Unknown(c) => println!("Processed Command: unknown ({})", c.trim()),
             }
 
-            let response = handle_command_with_peers(&request, &peer_manager);
-            let _ = stream.write_all(response.as_bytes());
+            // Spawn async task on Tokio runtime to execute TCP connection & handshake
+            let pm = Arc::clone(&peer_manager);
+            let req = request.into_owned();
+            tokio::spawn(async move {
+                let response = handle_command_with_peers_async(&req, &pm).await;
+                let _ = stream.write_all(response.as_bytes());
+            });
         }
         _ => {}
     }

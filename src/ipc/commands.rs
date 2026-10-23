@@ -1,4 +1,5 @@
 use crate::peer::manager::PeerManager;
+use crate::peer::client::establish_peer_connection;
 
 pub enum IpcCommand {
     Status,
@@ -30,7 +31,7 @@ impl IpcCommand {
     }
 }
 
-pub fn handle_command_with_peers(cmd: &str, peer_manager: &PeerManager) -> String {
+pub async fn handle_command_with_peers_async(cmd: &str, peer_manager: &PeerManager) -> String {
     let command = IpcCommand::from_str(cmd).unwrap_or_else(|_| IpcCommand::Unknown(cmd.to_string()));
     match command {
         IpcCommand::Status => "[OK] P2P Aggregator Daemon Active | SQLite WAL: Healthy | RocksDB Telemetry: Connected".to_string(),
@@ -40,8 +41,15 @@ pub fn handle_command_with_peers(cmd: &str, peer_manager: &PeerManager) -> Strin
         }
         IpcCommand::Metrics => "Telemetry: CPU 0.1%, Memory 5.4MB, Events Processed: 1,420".to_string(),
         IpcCommand::Connect(addr) => {
-            peer_manager.add_peer(addr.clone());
-            format!("[OK] Successfully connected and registered peer: {}\n", addr)
+            match establish_peer_connection(&addr).await {
+                Ok(msg) => {
+                    peer_manager.add_peer(addr.clone());
+                    format!("[OK] {}\n", msg)
+                }
+                Err(e) => {
+                    format!("[ERROR] Failed to connect to peer {}: {}\n", addr, e)
+                }
+            }
         }
         IpcCommand::LogLevel(level) => format!("[OK] Log level updated to: {}\n", level),
         IpcCommand::Unknown(c) => format!("Unknown Command: {}", c),
