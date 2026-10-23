@@ -1,4 +1,4 @@
-pub fn init_telemetry_db(_path: &str) -> Result<rocksdb::DB, Box<dyn std::error::Error>> {
+pub fn init_telemetry_db(path: &str) -> Result<rocksdb::DB, Box<dyn std::error::Error>> {
     let opts = rocksdb::Options::default();
-    Ok(rocksdb::DB::open(&opts, _path)?)
+    Ok(rocksdb::DB::open(&opts, path)?)
 }
