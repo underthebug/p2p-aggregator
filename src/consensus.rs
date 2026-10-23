@@ -78,4 +78,47 @@ impl ConsensusEngine {
             db_path: db_path.to_string(),
         }))
     }
+
+    pub async fn handle_append_entries(
+        &mut self,
+        term: u64,
+        leader_id: String,
+        entries: Vec<LogEntry>,
+    ) -> RaftMessage {
+        if term < self.current_term {
+            return RaftMessage::AppendEntriesResponse {
+                term: self.current_term,
+                success: false,
+                match_index: 0,
+            };
+        }
+
+        if term > self.current_term {
+            self.current_term = term;
+            self.role = NodeRole::Follower;
+            self.voted_for = None;
+        }
+
+        println!("[Consensus] Accepted AppendEntries from leader {} for term {}", leader_id, term);
+
+        // Store entries in SQLite WAL log
+        let db_path = self.db_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = Connection::open(db_path).unwrap();
+            let tx = conn.transaction().unwrap();
+            for entry in entries {
+                tx.execute(
+                    "INSERT OR REPLACE INTO raft_log (entry_index, term, data) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![entry.index as i64, entry.term as i64, entry.data],
+                ).unwrap();
+            }
+            tx.commit().unwrap();
+        }).await.unwrap();
+
+        RaftMessage::AppendEntriesResponse {
+            term: self.current_term,
+            success: true,
+            match_index: self.commit_index,
+        }
+    }
 }
