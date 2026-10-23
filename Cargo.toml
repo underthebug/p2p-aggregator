@@ -22,6 +22,6 @@ futures = "0.3"
 hyper = { version = "0.14", features = ["full"] }
 toml = "1.1.8"
 clap = { version = "4.6.7", features = ["derive"] }
-rand = { version = "0.10.3", features = ["std", "std_rng"] }
+rand = { version = "0.8", features = ["std", "std_rng"] }
 rand_core = "0.10.1"
 getrandom = { version = "0.4.3", features = ["std"] }
