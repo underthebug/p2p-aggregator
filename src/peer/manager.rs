@@ -8,13 +8,6 @@ pub struct PeerManager {
 }
 
 impl PeerManager {
-    pub fn new() -> Self {
-        Self {
-            connected_peers: Arc::new(Mutex::new(HashSet::new())),
-            store: None,
-        }
-    }
-
     pub fn with_store(db_path: &str) -> Self {
         let store = PeerStore::new(db_path).ok();
         let mut initial_peers = HashSet::new();

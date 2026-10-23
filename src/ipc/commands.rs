@@ -1,7 +1,6 @@
 use crate::peer::manager::PeerManager;
 use crate::peer::client::establish_peer_connection;
 use crate::telemetry::worker::TelemetryMetrics;
-use std::sync::Arc;
 
 pub enum IpcCommand {
     Status,
