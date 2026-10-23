@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>AI Inference & Analysis Node</title>
+  <style>
+    body { font-family: monospace; background: #121212; color: #82aaff; margin: 0; padding: 15px; box-sizing: border-box; }
+    h3 { margin-top: 0; font-size: 1rem; border-bottom: 1px solid #333; padding-bottom: 8px; }
+    .card { background: #1e1e1e; padding: 12px; border-radius: 6px; border: 1px solid #3949ab; margin-bottom: 12px; }
+    .control-label { font-size: 0.75rem; color: #888; margin-top: 8px; display: block; }
+    input, textarea, select, button { background: #2a2a2a; color: #fff; border: 1px solid #444; padding: 6px 8px; margin-bottom: 6px; border-radius: 4px; width: 100%; box-sizing: border-box; font-family: monospace; font-size: 0.85rem; }
+    textarea { resize: vertical; }
+    .btn-submit { background: #1a237e; color: #82aaff; font-weight: bold; border-color: #3949ab; cursor: pointer; }
+    .btn-submit:hover { background: #283593; }
+    .output-box { background: #151515; border: 1px solid #2a2a2a; padding: 10px; border-radius: 4px; font-size: 0.8rem; color: #d4d4d4; white-space: pre-wrap; max-height: 220px; overflow-y: auto; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h3>🤖 AI INFERENCE & MULTI-AGENT NODE</h3>
+    
+    <span class="control-label">LLM ENDPOINT (Ollama / LM Studio / Local Network):</span>
+    <input type="text" id="llm-endpoint" value="http://localhost:11434/api/generate" placeholder="http://192.168.1.50:11434/api/generate">
+
+    <span class="control-label">MODEL NAME:</span>
+    <input type="text" id="llm-model" value="llama3" placeholder="llama3, mistral, phi3">
+
+    <span class="control-label">ANALYSIS PROMPT / KEYWORD TARGET:</span>
+    <textarea id="ai-prompt" rows="3" placeholder="Analyze recent feed posts for security vulnerabilities or summarize topics..."></textarea>
+
+    <button class="btn-submit" onclick="runAiInference()">Run Local / Remote LLM Inference</button>
+
+    <span class="control-label">INFERENCE OUTPUT:</span>
+    <div id="ai-output" class="output-box">Ready for inference queries...</div>
+  </div>
+
+  <script>
+    async function invokeCmd(cmd, args = {}) {
+      if (window.__TAURI__ && window.__TAURI__.core) {
+        return await window.__TAURI__.core.invoke(cmd, args);
+      }
+    }
+
+    async function runAiInference() {
+      const endpointUrl = document.getElementById('llm-endpoint').value.trim();
+      const model = document.getElementById('llm-model').value.trim();
+      const prompt = document.getElementById('ai-prompt').value.trim();
+      const outputDiv = document.getElementById('ai-output');
+
+      if (!prompt) {
+        outputDiv.innerText = "Error: Please enter a prompt or analysis query.";
+        return;
+      }
+
+      outputDiv.innerText = "Querying inference endpoint...";
+
+      try {
+        let feedData = await invokeCmd('fetch_feed', { limit: 20, activeRegion: 'global', feedMode: 'live' });
+        let feedContext = JSON.stringify(feedData || []);
+        
+        let fullPrompt = `${prompt}\n\nFeed Context Data:\n${feedContext}`;
+
+        const res = await invokeCmd('query_llm_inference', { req: { endpointUrl, model, prompt: fullPrompt } });
+        outputDiv.innerText = res.response || "No response text returned.";
+      } catch (err) {
+        outputDiv.innerText = "Inference Error: " + err + "\n\n(Ensure Ollama or LM Studio is running and accessible on your local network).";
+      }
+    }
+  </script>
+</body>
+</html>

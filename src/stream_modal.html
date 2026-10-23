@@ -1,0 +1,64 @@
+<!-- Add this button inside your Network Feeds & Streams section header -->
+<div class="feed-header-actions" style="margin-top: 10px; margin-bottom: 10px;">
+  <button id="open-stream-manager-btn" class="btn-primary" style="width: 100%; background: #222; border: 1px solid #444; color: #00ffcc; padding: 6px; font-weight: bold; cursor: pointer;">+ Custom Feeds / Streams</button>
+</div>
+
+<!-- Pop-out Modal Window -->
+<div id="stream-manager-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:9999; justify-content:center; align-items:center;">
+  <div style="background:#111; border:1px solid #00ffcc; padding:20px; width:450px; max-height:80vh; overflow-y:auto; color:#fff; font-family:monospace;">
+    <h3 style="color:#00ffcc; margin-top:0;">Custom Stream Manager</h3>
+    
+    <!-- Form to Add / Edit Stream -->
+    <form id="stream-form" style="display:flex; flex-direction:column; gap:10px; margin-bottom:15px;">
+      <input type="hidden" id="stream-id">
+      <input type="text" id="stream-title" placeholder="Stream Title / Topic" required style="background:#222; border:1px solid #444; color:#fff; padding:6px;">
+      <input type="url" id="stream-url" placeholder="Stream URL or Endpoint" required style="background:#222; border:1px solid #444; color:#fff; padding:6px;">
+      <div style="display:flex; gap:10px;">
+        <button type="submit" id="stream-save-btn" style="background:#00ffcc; color:#000; border:none; padding:6px 12px; font-weight:bold; cursor:pointer;">Save Stream</button>
+        <button type="button" id="stream-cancel-btn" style="background:#444; color:#fff; border:none; padding:6px 12px; display:none; cursor:pointer;">Cancel</button>
+      </div>
+    </form>
+
+    <hr style="border-color:#333;">
+
+    <!-- Past Streams List -->
+    <h4 style="color:#aaa; margin-bottom:5px;">Past Added Streams</h4>
+    <div id="streams-list-container" style="max-height:200px; overflow-y:auto; display:flex; flex-direction:column; gap:8px;">
+      <!-- Populated dynamically -->
+    </div>
+
+    <button id="stream-close-modal-btn" style="margin-top:15px; background:#444; color:#fff; border:none; padding:6px 12px; width:100%; cursor:pointer;">Close</button>
+  </div>
+</div>
+<!-- Add this button inside your Network Feeds & Streams section header -->
+<div class="feed-header-actions" style="margin-top: 10px; margin-bottom: 10px;">
+  <button id="open-stream-manager-btn" class="btn-primary" style="width: 100%; background: #222; border: 1px solid #444; color: #00ffcc; padding: 6px; font-weight: bold; cursor: pointer;">+ Custom Feeds / Streams</button>
+</div>
+
+<!-- Pop-out Modal Window -->
+<div id="stream-manager-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:9999; justify-content:center; align-items:center;">
+  <div style="background:#111; border:1px solid #00ffcc; padding:20px; width:450px; max-height:80vh; overflow-y:auto; color:#fff; font-family:monospace;">
+    <h3 style="color:#00ffcc; margin-top:0;">Custom Stream Manager</h3>
+    
+    <!-- Form to Add / Edit Stream -->
+    <form id="stream-form" style="display:flex; flex-direction:column; gap:10px; margin-bottom:15px;">
+      <input type="hidden" id="stream-id">
+      <input type="text" id="stream-title" placeholder="Stream Title / Topic" required style="background:#222; border:1px solid #444; color:#fff; padding:6px;">
+      <input type="url" id="stream-url" placeholder="Stream URL or Endpoint" required style="background:#222; border:1px solid #444; color:#fff; padding:6px;">
+      <div style="display:flex; gap:10px;">
+        <button type="submit" id="stream-save-btn" style="background:#00ffcc; color:#000; border:none; padding:6px 12px; font-weight:bold; cursor:pointer;">Save Stream</button>
+        <button type="button" id="stream-cancel-btn" style="background:#444; color:#fff; border:none; padding:6px 12px; display:none; cursor:pointer;">Cancel</button>
+      </div>
+    </form>
+
+    <hr style="border-color:#333;">
+
+    <!-- Past Streams List -->
+    <h4 style="color:#aaa; margin-bottom:5px;">Past Added Streams</h4>
+    <div id="streams-list-container" style="max-height:200px; overflow-y:auto; display:flex; flex-direction:column; gap:8px;">
+      <!-- Populated dynamically -->
+    </div>
+
+    <button id="stream-close-modal-btn" style="margin-top:15px; background:#444; color:#fff; border:none; padding:6px 12px; width:100%; cursor:pointer;">Close</button>
+  </div>
+</div>

@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Knowledge Graph Visualizer</title>
+  <style>
+    body { font-family: monospace; background: #121212; color: #ff80ab; margin: 0; padding: 15px; box-sizing: border-box; overflow: hidden; }
+    h3 { margin-top: 0; font-size: 1rem; border-bottom: 1px solid #333; padding-bottom: 8px; }
+    .card { background: #1e1e1e; padding: 12px; border-radius: 6px; border: 1px solid #880e4f; height: calc(100vh - 50px); box-sizing: border-box; display: flex; flex-direction: column; }
+    canvas { flex: 1; background: #151515; border-radius: 4px; border: 1px solid #333; width: 100%; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h3>🕸️ MESH KNOWLEDGE & STREAM GRAPH</h3>
+    <div style="font-size:0.75rem; color:#aaa; margin-bottom:8px;">Visual mapping of active posts, topic clusters, and peer connections.</div>
+    <canvas id="graphCanvas"></canvas>
+  </div>
+
+  <script>
+    async function invokeCmd(cmd, args = {}) {
+      if (window.__TAURI__ && window.__TAURI__.core) {
+        return await window.__TAURI__.core.invoke(cmd, args);
+      }
+    }
+
+    async function renderGraph() {
+      const canvas = document.getElementById('graphCanvas');
+      canvas.width = canvas.parentElement.clientWidth - 24;
+      canvas.height = canvas.parentElement.clientHeight - 80;
+      const ctx = canvas.getContext('2d');
+
+      let posts = [];
+      try {
+        posts = await invokeCmd('fetch_feed', { limit: 30, activeRegion: 'global', feedMode: 'live' });
+      } catch (e) { posts = []; }
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const cx = canvas.width / 2;
+      const cy = canvas.height / 2;
+
+      ctx.fillStyle = '#00ffcc';
+      ctx.beginPath();
+      ctx.arc(cx, cy, 12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.font = '11px monospace';
+      ctx.fillText('Local Node', cx - 28, cy + 24);
+
+      if (posts && posts.length > 0) {
+        const angleStep = (Math.PI * 2) / posts.length;
+        posts.forEach((p, i) => {
+          const angle = i * angleStep;
+          const dist = 130 + (i % 3) * 25;
+          const px = cx + Math.cos(angle) * dist;
+          const py = cy + Math.sin(angle) * dist;
+
+          ctx.strokeStyle = '#333';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(cx, cy);
+          ctx.lineTo(px, py);
+          ctx.stroke();
+
+          ctx.fillStyle = p.topic === 'wiki-stream' ? '#82aaff' : (p.topic === 'tech-stream' ? '#ffcb6b' : '#ff80ab');
+          ctx.beginPath();
+          ctx.arc(px, py, 7, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.fillStyle = '#aaa';
+          ctx.font = '9px monospace';
+          ctx.fillText((p.title || '').substring(0, 16) + '...', px + 10, py + 3);
+        });
+      }
+    }
+
+    window.addEventListener('resize', renderGraph);
+    window.addEventListener('DOMContentLoaded', () => {
+      renderGraph();
+      setInterval(renderGraph, 5000);
+    });
+  </script>
+</body>
+</html>

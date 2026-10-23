@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Mesh Topics & Sub-Streams</title>
+  <style>
+    body { font-family: monospace; background: #121212; color: #ffcb6b; margin: 0; padding: 15px; box-sizing: border-box; }
+    h3 { margin-top: 0; font-size: 1rem; border-bottom: 1px solid #333; padding-bottom: 8px; }
+    .card { background: #1e1e1e; padding: 12px; border-radius: 6px; border: 1px solid #665500; margin-bottom: 12px; }
+    .topic-item { display: flex; justify-content: space-between; align-items: center; background: #181818; padding: 8px 12px; margin-top: 6px; border-radius: 4px; font-size: 0.9rem; }
+    .control-label { font-size: 0.75rem; color: #888; margin-top: 8px; display: block; }
+    input, button { background: #2a2a2a; color: #fff; border: 1px solid #444; padding: 6px 8px; margin-bottom: 6px; border-radius: 4px; width: 100%; box-sizing: border-box; font-family: monospace; font-size: 0.85rem; }
+    .action-btn { background: #2a2a2a; border: 1px solid #444; color: #ffcb6b; cursor: pointer; padding: 4px 12px; border-radius: 3px; width: unset; font-weight: bold; }
+    .action-btn:hover { background: #554400; color: #fff; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h3>🏷️ SUBSCRIBED MESH TOPICS</h3>
+    <div style="font-size:0.8rem; color:#aaa; margin-bottom:8px;">Select or subscribe to active sub-topics across your mesh streams.</div>
+    
+    <div class="topic-item">
+      <span>#all (All Topics)</span>
+      <button class="action-btn" onclick="selectTopic('all')">Select</button>
+    </div>
+    <div class="topic-item">
+      <span>#general</span>
+      <button class="action-btn" onclick="selectTopic('general')">Select</button>
+    </div>
+    <div class="topic-item">
+      <span>#security</span>
+      <button class="action-btn" onclick="selectTopic('security')">Select</button>
+    </div>
+    <div class="topic-item">
+      <span>#hardware</span>
+      <button class="action-btn" onclick="selectTopic('hardware')">Select</button>
+    </div>
+    <div class="topic-item">
+      <span>#mesh</span>
+      <button class="action-btn" onclick="selectTopic('mesh')">Select</button>
+    </div>
+    <div class="topic-item">
+      <span>#direct-messages</span>
+      <button class="action-btn" onclick="selectTopic('direct-messages')">Select</button>
+    </div>
+  </div>
+
+  <script>
+    function selectTopic(topicName) {
+      if (window.opener && !window.opener.closed) {
+        window.opener.setActiveTopicFilter(topicName);
+      }
+      window.close();
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+[package]
+name = "p2p-aggregator"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1.0", features = ["full"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+rocksdb = "0.23"
+libp2p = { version = "0.53", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+prometheus = "0.13"
+log = "0.4"
+env_logger = "0.11"
+axum = "0.7"
+sha2 = "0.10"
+ed25519-dalek = "2.1"
+anyhow = "1.0"
+hex = "0.4"
+futures = "0.3"
+hyper = { version = "0.14", features = ["full"] }
