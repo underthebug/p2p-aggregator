@@ -2,6 +2,11 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use rusqlite::Connection;
 use serde::{Serialize, Deserialize};
+use tokio::net::TcpStream;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use std::time::Duration;
+use rand::Rng;
+use crate::peer::manager::PeerManager;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NodeRole {
@@ -32,6 +37,16 @@ pub enum RaftMessage {
         success: bool,
         match_index: u64,
     },
+    RequestVote {
+        term: u64,
+        candidate_id: String,
+        last_log_index: u64,
+        last_log_term: u64,
+    },
+    RequestVoteResponse {
+        term: u64,
+        vote_granted: bool,
+    },
 }
 
 pub struct ConsensusEngine {
@@ -41,6 +56,7 @@ pub struct ConsensusEngine {
     pub commit_index: u64,
     pub last_applied: u64,
     db_path: String,
+    pub last_heartbeat_instant: std::time::Instant,
 }
 
 impl ConsensusEngine {
@@ -76,6 +92,7 @@ impl ConsensusEngine {
             commit_index: 0,
             last_applied: 0,
             db_path: db_path.to_string(),
+            last_heartbeat_instant: std::time::Instant::now(),
         }))
     }
 
@@ -93,10 +110,11 @@ impl ConsensusEngine {
             };
         }
 
-        if term > self.current_term {
+        if term >= self.current_term {
             self.current_term = term;
             self.role = NodeRole::Follower;
             self.voted_for = None;
+            self.last_heartbeat_instant = std::time::Instant::now();
         }
 
         println!("[Consensus] Accepted AppendEntries from leader {} for term {}", leader_id, term);
@@ -120,11 +138,35 @@ impl ConsensusEngine {
             match_index: self.commit_index,
         }
     }
-}
-use tokio::net::TcpStream;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-impl ConsensusEngine {
+    pub async fn handle_request_vote(
+        &mut self,
+        term: u64,
+        candidate_id: String,
+        _last_log_index: u64,
+        _last_log_term: u64,
+    ) -> RaftMessage {
+        if term > self.current_term {
+            self.current_term = term;
+            self.role = NodeRole::Follower;
+            self.voted_for = None;
+        }
+
+        let vote_granted = if term == self.current_term && (self.voted_for.is_none() || self.voted_for.as_ref() == Some(&candidate_id)) {
+            self.voted_for = Some(candidate_id.clone());
+            self.last_heartbeat_instant = std::time::Instant::now();
+            println!("[Consensus] Granted vote to candidate {} for term {}", candidate_id, term);
+            true
+        } else {
+            false
+        };
+
+        RaftMessage::RequestVoteResponse {
+            term: self.current_term,
+            vote_granted,
+        }
+    }
+
     pub async fn broadcast_append_entries(
         peer_addr: String,
         term: u64,
@@ -134,8 +176,6 @@ impl ConsensusEngine {
     ) -> std::io::Result<bool> {
         let mut socket = TcpStream::connect(&peer_addr).await?;
 
-        // 1. Send our public key (32 bytes) or handshake identity stub if needed
-        // For now, let's dispatch the serialized Raft message over the authenticated stream
         let msg = RaftMessage::AppendEntries {
             term,
             leader_id,
@@ -163,11 +203,7 @@ impl ConsensusEngine {
 
         Ok(false)
     }
-}
-use crate::peer::manager::PeerManager;
-use std::time::Duration;
 
-impl ConsensusEngine {
     pub fn start_leader_heartbeat_loop(
         consensus: Arc<Mutex<Self>>,
         peer_manager: Arc<PeerManager>,
@@ -196,6 +232,78 @@ impl ConsensusEngine {
                                 vec![],
                                 commit_index,
                             ).await;
+                        });
+                    }
+                }
+            }
+        });
+    }
+
+    pub fn start_election_timer_loop(
+        consensus: Arc<Mutex<Self>>,
+        peer_manager: Arc<PeerManager>,
+        node_id: String,
+    ) {
+        tokio::spawn(async move {
+            loop {
+                let timeout_duration = Duration::from_millis(rand::thread_rng().gen_range(3000..6000));
+                tokio::time::sleep(timeout_duration).await;
+
+                let mut should_elect = false;
+                {
+                    let engine = consensus.lock().await;
+                    if engine.role == NodeRole::Follower {
+                        if engine.last_heartbeat_instant.elapsed() >= timeout_duration {
+                            should_elect = true;
+                        }
+                    }
+                }
+
+                if should_elect {
+                    let (term, peers) = {
+                        let mut engine = consensus.lock().await;
+                        engine.role = NodeRole::Candidate;
+                        engine.current_term += 1;
+                        engine.voted_for = Some(node_id.clone());
+                        engine.last_heartbeat_instant = std::time::Instant::now();
+                        println!("[Consensus] Election timeout reached. Transitioning to Candidate for term {}", engine.current_term);
+                        (engine.current_term, peer_manager.get_peers())
+                    };
+
+                    for peer in peers {
+                        let nid = node_id.clone();
+                        let consensus_ref = Arc::clone(&consensus);
+                        tokio::spawn(async move {
+                            if let Ok(mut socket) = TcpStream::connect(&peer).await {
+                                let msg = RaftMessage::RequestVote {
+                                    term,
+                                    candidate_id: nid,
+                                    last_log_index: 0,
+                                    last_log_term: 0,
+                                };
+                                if let Ok(payload) = bincode::serialize(&msg) {
+                                    let len_header = (payload.len() as u32).to_be_bytes();
+                                    if socket.write_all(&len_header).await.is_ok() && socket.write_all(&payload).await.is_ok() {
+                                        let mut resp_len_buf = [0u8; 4];
+                                        if socket.read_exact(&mut resp_len_buf).await.is_ok() {
+                                            let resp_len = u32::from_be_bytes(resp_len_buf) as usize;
+                                            let mut resp_buf = vec![0u8; resp_len];
+                                            if socket.read_exact(&mut resp_buf).await.is_ok() {
+                                                if let Ok(RaftMessage::RequestVoteResponse { vote_granted, term: resp_term }) = bincode::deserialize(&resp_buf) {
+                                                    let mut engine = consensus_ref.lock().await;
+                                                    if resp_term > engine.current_term {
+                                                        engine.current_term = resp_term;
+                                                        engine.role = NodeRole::Follower;
+                                                        engine.voted_for = None;
+                                                    } else if vote_granted && engine.role == NodeRole::Candidate && resp_term == engine.current_term {
+                                                        // count vote
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         });
                     }
                 }

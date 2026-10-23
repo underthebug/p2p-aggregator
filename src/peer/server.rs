@@ -27,32 +27,27 @@ pub async fn start_p2p_listener(
                     let consensus = Arc::clone(&consensus_engine);
                     
                     tokio::spawn(async move {
-                        // 1. Read remote peer's public key (32 bytes)
                         let mut remote_pubkey = [0u8; 32];
                         if socket.read_exact(&mut remote_pubkey).await.is_err() {
                             return;
                         }
 
-                        // 2. Send our public key (32 bytes)
                         let pub_key_bytes = id.verifying_key.to_bytes();
                         if socket.write_all(&pub_key_bytes).await.is_err() {
                             return;
                         }
 
-                        // 3. Generate and send random challenge nonce (32 bytes)
                         let mut challenge = [0u8; 32];
                         OsRng.fill_bytes(&mut challenge);
                         if socket.write_all(&challenge).await.is_err() {
                             return;
                         }
 
-                        // 4. Read remote peer's signature (64 bytes)
                         let mut sig_bytes = [0u8; 64];
                         if socket.read_exact(&mut sig_bytes).await.is_err() {
                             return;
                         }
 
-                        // 5. Verify signature
                         let authenticated = id.verify_challenge(&remote_pubkey, &challenge, &sig_bytes);
                         
                         if authenticated {
@@ -62,7 +57,6 @@ pub async fn start_p2p_listener(
                             pm.add_peer(peer_addr.to_string());
                             println!("[CryptoMesh] Successfully authenticated secure peer: {}", peer_addr);
 
-                            // 6. Raft Consensus RPC Message Loop over Authenticated Connection
                             loop {
                                 let mut len_buf = [0u8; 4];
                                 if socket.read_exact(&mut len_buf).await.is_err() {
@@ -79,6 +73,10 @@ pub async fn start_p2p_listener(
                                         RaftMessage::AppendEntries { term, leader_id, entries, .. } => {
                                             let mut engine = consensus.lock().await;
                                             engine.handle_append_entries(term, leader_id, entries).await
+                                        }
+                                        RaftMessage::RequestVote { term, candidate_id, last_log_index, last_log_term } => {
+                                            let mut engine = consensus.lock().await;
+                                            engine.handle_request_vote(term, candidate_id, last_log_index, last_log_term).await
                                         }
                                         _ => {
                                             RaftMessage::AppendEntriesResponse { term: 0, success: false, match_index: 0 }

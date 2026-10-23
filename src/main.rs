@@ -46,8 +46,14 @@ async fn main() -> std::io::Result<()> {
     ConsensusEngine::start_leader_heartbeat_loop(
         Arc::clone(&consensus),
         Arc::clone(&peer_manager),
-        node_id,
+        node_id.clone(),
         config.heartbeat_interval_secs,
+    );
+
+    ConsensusEngine::start_election_timer_loop(
+        Arc::clone(&consensus),
+        Arc::clone(&peer_manager),
+        node_id,
     );
 
     let telemetry = TelemetryMetrics::new();
