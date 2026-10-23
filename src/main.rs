@@ -5,13 +5,19 @@ mod peer;
 use ipc::server::start_ipc_server;
 use telemetry::worker::start_telemetry_worker;
 use peer::bootstrap::load_bootstrap_nodes;
+use peer::manager::PeerManager;
 
 fn main() -> std::io::Result<()> {
     println!("=== P2P Aggregator Daemon Starting ===");
     
-    // Load static bootstrap nodes
+    // Initialize Peer Manager & load bootstrap nodes
+    let peer_manager = PeerManager::new();
     let bootstrap_nodes = load_bootstrap_nodes();
-    println!("Loaded {} bootstrap nodes", bootstrap_nodes.len());
+    
+    for node in bootstrap_nodes {
+        peer_manager.add_peer(node);
+    }
+    println!("Initialized PeerManager with {} active peer entries", peer_manager.get_peer_count());
 
     // Start telemetry worker thread
     start_telemetry_worker();
