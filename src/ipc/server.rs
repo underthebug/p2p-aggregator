@@ -11,6 +11,7 @@ pub fn start_ipc_server(
     peer_manager: Arc<PeerManager>,
     _telemetry: Arc<TelemetryMetrics>,
     consensus_engine: Arc<Mutex<ConsensusEngine>>,
+    node_id: String,
 ) -> std::io::Result<()> {
     if std::path::Path::new(socket_path).exists() {
         std::fs::remove_file(socket_path)?;
@@ -25,29 +26,33 @@ pub fn start_ipc_server(
                 Ok(mut socket) => {
                     let pm = Arc::clone(&peer_manager);
                     let consensus = Arc::clone(&consensus_engine);
+                    let nid = node_id.clone();
 
                     tokio::spawn(async move {
                         let mut buf = [0u8; 1024];
                         if let Ok(n) = socket.read(&mut buf) {
                             let command = String::from_utf8_lossy(&buf[..n]).trim().to_string();
                             
-                            let response = match command.as_str() {
-                                "status" => {
-                                    let peers = pm.get_peers();
-                                    let engine = consensus.lock().await;
-                                    format!(
-                                        "DAEMON_STATUS: RUNNING\nRole: {:?}\nCurrent Term: {}\nCommit Index: {}\nConnected Peers: {}\n",
-                                        engine.role, engine.current_term, engine.commit_index, peers.len()
-                                    )
+                            let response = if command == "status" {
+                                let peers = pm.get_peers();
+                                let engine = consensus.lock().await;
+                                format!(
+                                    "DAEMON_STATUS: RUNNING\nRole: {:?}\nCurrent Term: {}\nCommit Index: {}\nConnected Peers: {}\n",
+                                    engine.role, engine.current_term, engine.commit_index, peers.len()
+                                )
+                            } else if command == "peers" {
+                                let peers = pm.get_peers();
+                                format!("CONNECTED_PEERS:\n{:#?}", peers)
+                            } else if command == "metrics" {
+                                format!("TELEMETRY: Active worker running\n")
+                            } else if command.starts_with("submit ") {
+                                let payload = command.trim_start_matches("submit ").as_bytes().to_vec();
+                                match ConsensusEngine::client_append_entry(consensus, pm, nid, payload).await {
+                                    Ok(msg) => msg,
+                                    Err(err) => format!("ERROR: {}\n", err),
                                 }
-                                "peers" => {
-                                    let peers = pm.get_peers();
-                                    format!("CONNECTED_PEERS:\n{:#?}", peers)
-                                }
-                                "metrics" => {
-                                    format!("TELEMETRY: Active worker running\n")
-                                }
-                                _ => format!("UNKNOWN_COMMAND: {}\n", command),
+                            } else {
+                                format!("UNKNOWN_COMMAND: {}\n", command)
                             };
 
                             let _ = socket.write_all(response.as_bytes());

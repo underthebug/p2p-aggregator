@@ -332,3 +332,66 @@ impl ConsensusEngine {
         });
     }
 }
+
+impl ConsensusEngine {
+    pub async fn client_append_entry(
+        consensus: Arc<Mutex<Self>>,
+        peer_manager: Arc<PeerManager>,
+        node_id: String,
+        data: Vec<u8>,
+    ) -> Result<String, String> {
+        let (role, term, next_index, db_path, commit_index) = {
+            let mut engine = consensus.lock().await;
+            if engine.role != NodeRole::Leader {
+                return Err("NODE_NOT_LEADER: Cannot accept writes on follower/candidate".to_string());
+            }
+
+            // Get last log index to determine next index
+            let db_p = engine.db_path.clone();
+            let next_idx = tokio::task::spawn_blocking(move || {
+                let conn = Connection::open(db_p).unwrap();
+                let count: i64 = conn.query_row("SELECT COUNT(*) FROM raft_log", [], |row| row.get(0)).unwrap_or(0);
+                (count + 1) as u64
+            }).await.unwrap_or(1);
+
+            (engine.role, engine.current_term, next_idx, engine.db_path.clone(), engine.commit_index)
+        };
+
+        let entry = LogEntry {
+            term,
+            index: next_index,
+            data,
+        };
+
+        // Persist locally
+        let entry_clone = entry.clone();
+        let db_p = db_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = Connection::open(db_p).unwrap();
+            conn.execute(
+                "INSERT INTO raft_log (entry_index, term, data) VALUES (?1, ?2, ?3)",
+                rusqlite::params![entry_clone.index as i64, entry_clone.term as i64, entry_clone.data],
+            ).unwrap();
+        }).await.unwrap();
+
+        println!("[Consensus] Leader accepted client write at index {}. Replicating...", next_index);
+
+        // Replicate to all peers
+        let peers = peer_manager.get_peers();
+        for peer in peers {
+            let nid = node_id.clone();
+            let ent = vec![entry.clone()];
+            tokio::spawn(async move {
+                let _ = Self::broadcast_append_entries(
+                    peer,
+                    term,
+                    nid,
+                    ent,
+                    commit_index,
+                ).await;
+            });
+        }
+
+        Ok(format!("SUCCESS: Appended and replicated log entry at index {}\n", next_index))
+    }
+}
