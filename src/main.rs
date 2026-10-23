@@ -56,7 +56,7 @@ async fn main() -> std::io::Result<()> {
     start_metrics_exporter(&config.metrics_bind_addr, Arc::clone(&peer_manager), Arc::clone(&telemetry)).await?;
     start_peer_heartbeat(Arc::clone(&peer_manager), config.heartbeat_interval_secs);
     start_p2p_listener(&config.p2p_bind_addr, Arc::clone(&peer_manager), Arc::clone(&consensus)).await?;
-    start_ipc_server(&config.ipc_socket_path, Arc::clone(&peer_manager), Arc::clone(&telemetry))?;
+    start_ipc_server(&config.ipc_socket_path, Arc::clone(&peer_manager), Arc::clone(&telemetry), Arc::clone(&consensus))?;
 
     std::future::pending::<()>().await;
     Ok(())

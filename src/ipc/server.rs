@@ -1,61 +1,63 @@
+use std::os::unix::net::UnixListener;
 use std::io::{Read, Write};
-use std::os::unix::net::{UnixListener, UnixStream};
-use std::fs;
-use std::path::Path;
 use std::sync::Arc;
-use crate::ipc::commands::{IpcCommand, handle_command_with_peers_async};
+use tokio::sync::Mutex;
 use crate::peer::manager::PeerManager;
 use crate::telemetry::worker::TelemetryMetrics;
-
-fn handle_client(mut stream: UnixStream, peer_manager: Arc<PeerManager>, telemetry: Arc<TelemetryMetrics>) {
-    let mut buffer = [0; 512];
-    match stream.read(&mut buffer) {
-        Ok(n) if n > 0 => {
-            let request = String::from_utf8_lossy(&buffer[..n]);
-            let command = IpcCommand::from_str(&request).unwrap_or_else(|_| IpcCommand::Unknown(request.to_string()));
-            
-            match &command {
-                IpcCommand::Status => println!("Processed Command: status"),
-                IpcCommand::Peers => println!("Processed Command: peers"),
-                IpcCommand::Metrics => println!("Processed Command: metrics"),
-                IpcCommand::Connect(addr) => println!("Processed Command: connect {}", addr),
-                IpcCommand::LogLevel(lvl) => println!("Processed Command: loglevel {}", lvl),
-                IpcCommand::Unknown(c) => println!("Processed Command: unknown ({})", c.trim()),
-            }
-
-            let pm = Arc::clone(&peer_manager);
-            let tel = Arc::clone(&telemetry);
-            let req = request.into_owned();
-            tokio::spawn(async move {
-                let response = handle_command_with_peers_async(&req, &pm, &tel).await;
-                let _ = stream.write_all(response.as_bytes());
-            });
-        }
-        _ => {}
-    }
-}
+use crate::consensus::ConsensusEngine;
 
 pub fn start_ipc_server(
-    socket_path: &str, 
-    peer_manager: Arc<PeerManager>, 
-    telemetry: Arc<TelemetryMetrics>
+    socket_path: &str,
+    peer_manager: Arc<PeerManager>,
+    telemetry: Arc<TelemetryMetrics>,
+    consensus_engine: Arc<Mutex<ConsensusEngine>>,
 ) -> std::io::Result<()> {
-    if Path::new(socket_path).exists() {
-        fs::remove_file(socket_path)?;
+    if std::path::Path::new(socket_path).exists() {
+        std::fs::remove_file(socket_path)?;
     }
 
     let listener = UnixListener::bind(socket_path)?;
-    println!("IPC server listening on {}", socket_path);
+    println!("IPC server listening on Unix socket: {}", socket_path);
 
-    std::thread::spawn(move || {
+    tokio::spawn(async move {
         for stream in listener.incoming() {
             match stream {
-                Ok(stream) => {
-                    handle_client(stream, Arc::clone(&peer_manager), Arc::clone(&telemetry));
+                Ok(mut socket) => {
+                    let pm = Arc::clone(&peer_manager);
+                    let tm = Arc::clone(&telemetry);
+                    let consensus = Arc::clone(&consensus_engine);
+
+                    tokio::spawn(async move {
+                        let mut buf = [0u8; 1024];
+                        if let Ok(n) = socket.read(&mut buf) {
+                            let command = String::from_utf8_lossy(&buf[..n]).trim().to_string();
+                            
+                            let response = match command.as_str() {
+                                "status" => {
+                                    let peers = pm.get_peers();
+                                    let engine = consensus.lock().await;
+                                    format!(
+                                        "DAEMON_STATUS: RUNNING\nRole: {:?}\nCurrent Term: {}\nCommit Index: {}\nConnected Peers: {}\n",
+                                        engine.role, engine.current_term, engine.commit_index, peers.len()
+                                    )
+                                }
+                                "peers" => {
+                                    let peers = pm.get_peers();
+                                    format!("CONNECTED_PEERS:\n{:#?}", peers)
+                                }
+                                "metrics" => {
+                                    let metrics = tm.get_snapshot();
+                                    format!("TELEMETRY:\n{:#?}", metrics)
+                                }
+                                _ => format!("UNKNOWN_COMMAND: {}\n", command),
+                            };
+
+                            let _ = socket.write_all(response.as_bytes());
+                        }
+                    });
                 }
                 Err(e) => {
-                    eprintln!("IPC connection failed: {}", e);
-                    break;
+                    eprintln!("IPC accept error: {}", e);
                 }
             }
         }
