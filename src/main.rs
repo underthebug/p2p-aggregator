@@ -11,14 +11,22 @@ use std::sync::Arc;
 fn main() -> std::io::Result<()> {
     println!("=== P2P Aggregator Daemon Starting ===");
     
-    // Initialize Shared Peer Manager & load bootstrap nodes
-    let peer_manager = Arc::new(PeerManager::new());
+    // Initialize Shared Peer Manager with SQLite WAL persistence
+    let db_path = "/var/lib/p2p-aggregator/peers.db";
+    // Fallback to local path if /var/lib/p2p-aggregator is not writable/present
+    let db_actual_path = if std::fs::metadata("/var/lib/p2p-aggregator").is_ok() {
+        db_path
+    } else {
+        "peers.db"
+    };
+
+    let peer_manager = Arc::new(PeerManager::with_store(db_actual_path));
     let bootstrap_nodes = load_bootstrap_nodes();
     
     for node in bootstrap_nodes {
         peer_manager.add_peer(node);
     }
-    println!("Initialized PeerManager with {} active peer entries", peer_manager.get_peer_count());
+    println!("Initialized PeerManager with {} active peer entries (Persistence DB: {})", peer_manager.get_peer_count(), db_actual_path);
 
     // Start telemetry worker thread
     start_telemetry_worker();
