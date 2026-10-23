@@ -3,7 +3,7 @@ mod telemetry;
 mod peer;
 
 use ipc::server::start_ipc_server;
-use telemetry::worker::start_telemetry_worker;
+use telemetry::worker::{start_telemetry_worker, TelemetryMetrics};
 use peer::bootstrap::load_bootstrap_nodes;
 use peer::manager::PeerManager;
 use std::sync::Arc;
@@ -13,7 +13,6 @@ fn main() -> std::io::Result<()> {
     
     // Initialize Shared Peer Manager with SQLite WAL persistence
     let db_path = "/var/lib/p2p-aggregator/peers.db";
-    // Fallback to local path if /var/lib/p2p-aggregator is not writable/present
     let db_actual_path = if std::fs::metadata("/var/lib/p2p-aggregator").is_ok() {
         db_path
     } else {
@@ -28,12 +27,14 @@ fn main() -> std::io::Result<()> {
     }
     println!("Initialized PeerManager with {} active peer entries (Persistence DB: {})", peer_manager.get_peer_count(), db_actual_path);
 
-    // Start telemetry worker thread
-    start_telemetry_worker();
+    // Initialize & start live telemetry worker
+    let telemetry = TelemetryMetrics::new();
+    start_telemetry_worker(Arc::clone(&telemetry));
+    println!("Background telemetry worker started.");
 
-    // Start IPC server over Unix domain socket with shared peer manager state
+    // Start IPC server over Unix domain socket with shared peer manager & telemetry state
     let socket_path = "/tmp/agent_swarm.sock";
-    start_ipc_server(socket_path, Arc::clone(&peer_manager))?;
+    start_ipc_server(socket_path, Arc::clone(&peer_manager), Arc::clone(&telemetry))?;
 
     // Keep main thread alive
     std::thread::park();

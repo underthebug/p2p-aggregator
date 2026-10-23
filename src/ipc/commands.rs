@@ -1,5 +1,7 @@
 use crate::peer::manager::PeerManager;
 use crate::peer::client::establish_peer_connection;
+use crate::telemetry::worker::TelemetryMetrics;
+use std::sync::Arc;
 
 pub enum IpcCommand {
     Status,
@@ -31,7 +33,11 @@ impl IpcCommand {
     }
 }
 
-pub async fn handle_command_with_peers_async(cmd: &str, peer_manager: &PeerManager) -> String {
+pub async fn handle_command_with_peers_async(
+    cmd: &str, 
+    peer_manager: &PeerManager, 
+    telemetry: &TelemetryMetrics
+) -> String {
     let command = IpcCommand::from_str(cmd).unwrap_or_else(|_| IpcCommand::Unknown(cmd.to_string()));
     match command {
         IpcCommand::Status => "[OK] P2P Aggregator Daemon Active | SQLite WAL: Healthy | RocksDB Telemetry: Connected".to_string(),
@@ -39,7 +45,7 @@ pub async fn handle_command_with_peers_async(cmd: &str, peer_manager: &PeerManag
             let peers = peer_manager.get_peers();
             format!("Active Peers: [{}]", peers.join(", "))
         }
-        IpcCommand::Metrics => "Telemetry: CPU 0.1%, Memory 5.4MB, Events Processed: 1,420".to_string(),
+        IpcCommand::Metrics => telemetry.get_summary(),
         IpcCommand::Connect(addr) => {
             match establish_peer_connection(&addr).await {
                 Ok(msg) => {
