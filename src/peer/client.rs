@@ -1,40 +1,37 @@
 use tokio::net::TcpStream;
-use tokio::time::{timeout, Duration};
-use std::net::SocketAddr;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use std::error::Error;
+use crate::crypto::NodeIdentity;
 
-pub fn parse_multiaddr(addr: &str) -> Option<SocketAddr> {
-    // Basic multiaddr parser for /ip4/X.X.X.X/tcp/YYYY or direct IP:PORT
-    let trimmed = addr.trim();
-    if trimmed.starts_with("/ip4/") {
-        let parts: Vec<&str> = trimmed.split('/').collect();
-        if parts.len() >= 5 {
-            let ip = parts[2];
-            let port = parts[4];
-            if let Ok(socket_addr) = format!("{}:{}", ip, port).parse() {
-                return Some(socket_addr);
-            }
-        }
-    } else if let Ok(socket_addr) = trimmed.parse() {
-        return Some(socket_addr);
-    }
-    None
-}
+pub async fn establish_peer_connection(addr: &str) -> Result<String, Box<dyn Error + Send + Sync>> {
+    let mut socket = TcpStream::connect(addr).await?;
+    
+    // Load local node identity for cryptographic authentication
+    let identity = NodeIdentity::load_or_generate("node.key");
+    let pub_key_bytes = identity.verifying_key.to_bytes();
 
-pub async fn establish_peer_connection(addr: &str) -> Result<String, String> {
-    let socket_addr = parse_multiaddr(addr)
-        .ok_or_else(|| format!("Invalid peer address format: {}", addr))?;
+    // 1. Send our public key (32 bytes)
+    socket.write_all(&pub_key_bytes).await?;
 
-    println!("Attempting TCP connection to peer at {}", socket_addr);
+    // 2. Read remote peer's public key (32 bytes)
+    let mut remote_pubkey = [0u8; 32];
+    socket.read_exact(&mut remote_pubkey).await?;
 
-    match timeout(Duration::from_secs(3), TcpStream::connect(socket_addr)).await {
-        Ok(Ok(_stream)) => {
-            Ok(format!("Successfully established TCP handshake with {}", addr))
-        }
-        Ok(Err(e)) => {
-            Err(format!("Failed to connect to {}: {}", addr, e))
-        }
-        Err(_) => {
-            Err(format!("Connection timed out connecting to {}", addr))
-        }
+    // 3. Receive challenge nonce from remote peer (32 bytes)
+    let mut challenge = [0u8; 32];
+    socket.read_exact(&mut challenge).await?;
+
+    // 4. Sign challenge and send signature (64 bytes)
+    let signature = identity.sign_challenge(&challenge);
+    socket.write_all(&signature.to_bytes()).await?;
+
+    // 5. Read handshake status result
+    let mut status_buf = [0u8; 2];
+    socket.read_exact(&mut status_buf).await?;
+    
+    if &status_buf == b"OK" {
+        Ok(format!("Successfully authenticated and connected to peer {}", addr))
+    } else {
+        Err("Cryptographic handshake authentication failed".into())
     }
 }

@@ -1,5 +1,6 @@
 mod cli;
 mod config;
+mod crypto;
 mod ipc;
 mod telemetry;
 mod peer;
@@ -53,7 +54,7 @@ async fn main() -> std::io::Result<()> {
     start_peer_heartbeat(Arc::clone(&peer_manager), config.heartbeat_interval_secs);
     println!("Background peer heartbeat worker started (interval: {}s).", config.heartbeat_interval_secs);
 
-    // Start inbound P2P TCP listener
+    // Start inbound P2P TCP encrypted listener
     start_p2p_listener(&config.p2p_bind_addr, Arc::clone(&peer_manager)).await?;
 
     // Start IPC server over Unix domain socket
