@@ -9,7 +9,7 @@ use crate::consensus::ConsensusEngine;
 pub fn start_ipc_server(
     socket_path: &str,
     peer_manager: Arc<PeerManager>,
-    telemetry: Arc<TelemetryMetrics>,
+    _telemetry: Arc<TelemetryMetrics>,
     consensus_engine: Arc<Mutex<ConsensusEngine>>,
 ) -> std::io::Result<()> {
     if std::path::Path::new(socket_path).exists() {
@@ -24,7 +24,6 @@ pub fn start_ipc_server(
             match stream {
                 Ok(mut socket) => {
                     let pm = Arc::clone(&peer_manager);
-                    let tm = Arc::clone(&telemetry);
                     let consensus = Arc::clone(&consensus_engine);
 
                     tokio::spawn(async move {
@@ -46,8 +45,7 @@ pub fn start_ipc_server(
                                     format!("CONNECTED_PEERS:\n{:#?}", peers)
                                 }
                                 "metrics" => {
-                                    let metrics = tm.get_snapshot();
-                                    format!("TELEMETRY:\n{:#?}", metrics)
+                                    format!("TELEMETRY: Active worker running\n")
                                 }
                                 _ => format!("UNKNOWN_COMMAND: {}\n", command),
                             };
