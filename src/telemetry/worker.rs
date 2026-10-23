@@ -23,14 +23,18 @@ impl TelemetryMetrics {
         self.events_processed.fetch_add(1, Ordering::Relaxed);
     }
 
-    pub fn get_summary(&self) -> String {
+    pub fn get_raw_metrics(&self) -> (u64, u64) {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
         let uptime_secs = now - self.start_time;
         let events = self.events_processed.load(Ordering::Relaxed);
-        
+        (uptime_secs, events)
+    }
+
+    pub fn get_summary(&self) -> String {
+        let (uptime_secs, events) = self.get_raw_metrics();
         format!(
             "Telemetry: CPU 0.1%, Memory 5.6MB, Uptime: {}s, Events Processed: {}",
             uptime_secs, events

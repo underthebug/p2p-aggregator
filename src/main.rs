@@ -6,6 +6,7 @@ mod peer;
 use config::Config;
 use ipc::server::start_ipc_server;
 use telemetry::worker::{start_telemetry_worker, TelemetryMetrics};
+use telemetry::exporter::start_metrics_exporter;
 use peer::manager::PeerManager;
 use peer::server::start_p2p_listener;
 use peer::heartbeat::start_peer_heartbeat;
@@ -30,6 +31,9 @@ async fn main() -> std::io::Result<()> {
     let telemetry = TelemetryMetrics::new();
     start_telemetry_worker(Arc::clone(&telemetry));
     println!("Background telemetry worker started.");
+
+    // Start Prometheus metrics HTTP exporter
+    start_metrics_exporter(&config.metrics_bind_addr, Arc::clone(&peer_manager), Arc::clone(&telemetry)).await?;
 
     // Start background peer heartbeat and health check worker
     start_peer_heartbeat(Arc::clone(&peer_manager), config.heartbeat_interval_secs);
