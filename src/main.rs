@@ -1,8 +1,11 @@
+mod cli;
 mod config;
 mod ipc;
 mod telemetry;
 mod peer;
 
+use clap::Parser;
+use cli::Cli;
 use config::Config;
 use ipc::server::start_ipc_server;
 use telemetry::worker::{start_telemetry_worker, TelemetryMetrics};
@@ -16,8 +19,19 @@ use std::sync::Arc;
 async fn main() -> std::io::Result<()> {
     println!("=== P2P Aggregator Daemon Starting ===");
     
+    // Parse command line arguments
+    let args = Cli::parse();
+
     // Load configuration from config.toml (or fallback to defaults)
-    let config = Config::load("config.toml");
+    let mut config = Config::load(&args.config);
+
+    // Apply CLI overrides if provided
+    if let Some(port) = args.metrics_port {
+        config.metrics_bind_addr = format!("0.0.0.0:{}", port);
+    }
+    if let Some(port) = args.p2p_port {
+        config.p2p_bind_addr = format!("0.0.0.0:{}", port);
+    }
     
     // Initialize Shared Peer Manager with SQLite WAL persistence
     let peer_manager = Arc::new(PeerManager::with_store(&config.database_path));
