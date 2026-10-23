@@ -13,7 +13,7 @@ pub struct TelemetryMetrics {
 
 impl TelemetryMetrics {
     pub fn new(db_path: &str) -> Arc<Self> {
-        let telemetry_db_path = format!("{}_telemetry", db_path);
+        let telemetry_db_path = format!("{}_telemetry.db", db_path);
         if let Some(parent) = std::path::Path::new(&telemetry_db_path).parent() {
             let _ = std::fs::create_dir_all(parent);
         }
