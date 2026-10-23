@@ -21,4 +21,9 @@ impl PeerManager {
         let peers = self.connected_peers.lock().unwrap();
         peers.len()
     }
+
+    pub fn get_peers(&self) -> Vec<String> {
+        let peers = self.connected_peers.lock().unwrap();
+        peers.iter().cloned().collect()
+    }
 }
