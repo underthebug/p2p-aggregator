@@ -1,5 +1,5 @@
 use ed25519_dalek::{SigningKey, VerifyingKey, Signer, Signature, Verifier};
-use rand::rngs::OsRng;
+use rand_core::OsRng;
 use std::fs;
 use std::path::Path;
 

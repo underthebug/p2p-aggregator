@@ -3,7 +3,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use std::sync::Arc;
 use crate::peer::manager::PeerManager;
 use crate::crypto::NodeIdentity;
-use rand::rngs::OsRng;
+use rand_core::OsRng;
 use rand::RngCore;
 
 pub async fn start_p2p_listener(bind_addr: &str, peer_manager: Arc<PeerManager>) -> std::io::Result<()> {
