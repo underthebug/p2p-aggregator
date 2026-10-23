@@ -75,3 +75,5 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+// TODO: Implement telemetry flush worker and static bootstrap node configuration
