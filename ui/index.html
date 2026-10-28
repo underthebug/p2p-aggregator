@@ -1,1029 +1,1151 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>P2P Link Aggregator</title>
-  <style>
-    :root { font-size: 14px; --accent-color: #00ffcc; }
-    body { font-family: monospace; background: #121212; color: #e0e0e0; margin: 0; padding: 15px; overflow: hidden; height: 100vh; box-sizing: border-box; }
-    h1 { font-size: 1.3rem; color: var(--accent-color); margin: 0 0 10px 0; }
-    .layout { display: flex; gap: 15px; height: calc(100vh - 55px); position: relative; }
-    
-    .sidebar { width: 340px; display: flex; flex-direction: column; gap: 10px; flex-shrink: 0; overflow-y: auto; padding-right: 5px; padding-bottom: 30px; box-sizing: border-box; transition: transform 0.3s ease, width 0.3s ease; }
-    .sidebar.collapsed { transform: translateX(-360px); width: 0; padding: 0; overflow: hidden; }
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mesh Station - Sovereign Hub</title>
+    <link rel="stylesheet" href="/tailwind.css">
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const rssIngestBtn = document.getElementById('rss-ingest-btn');
+        if (rssIngestBtn) {
+            rssIngestBtn.addEventListener('click', async () => {
+                let raw_url = document.getElementById('rss-url-input').value.trim();
+                const feed_url = raw_url.split(']')[0].split(' ')[0];
+                document.getElementById('rss-url-input').value = feed_url;
 
-    .mini-taskbar { width: 45px; background: #181818; border: 1px solid #333; border-radius: 6px; display: flex; flex-direction: column; align-items: center; padding: 10px 0; gap: 15px; flex-shrink: 0; }
-    .traffic-lights { display: flex; flex-direction: column; gap: 8px; align-items: center; }
-    .traffic-light { width: 10px; height: 10px; border-radius: 50%; background: #333; box-shadow: inset 0 0 3px rgba(0,0,0,0.8); }
-    .light-red { background: #ff5555; box-shadow: 0 0 6px #ff5555; }
-    .light-yellow { background: #ffb86c; box-shadow: 0 0 6px #ffb86c; }
-    .light-green { background: #50fa7b; box-shadow: 0 0 6px #50fa7b; animation: pulse 2s infinite; }
+                const region = document.getElementById('rss-target-region').value;
+                const activeTags = Array.from(document.querySelectorAll('.tag-pill'))
+                    .filter(b => b.classList.contains('bg-amber-600'))
+                    .map(b => b.getAttribute('data-tag'));
 
-    @keyframes pulse {
-      0% { opacity: 0.6; }
-      50% { opacity: 1; box-shadow: 0 0 10px #50fa7b; }
-      100% { opacity: 0.6; }
-    }
+                rssIngestBtn.innerText = "Fetching...";
 
-    .taskbar-btn { background: #2a2a2a; border: 1px solid #444; color: var(--accent-color); cursor: pointer; width: 32px; height: 32px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 1rem; }
-    .taskbar-btn:hover { background: #004433; border-color: var(--accent-color); }
-
-    .main-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; padding-right: 10px; }
-    .card { background: #1e1e1e; padding: 12px; border-radius: 6px; border: 1px solid #333; }
-    .post-card { display: flex; gap: 15px; }
-
-    .feed-scroll-area { flex: 1; overflow-y: auto; }
-
-    .vote-controls { display: flex; flex-direction: column; align-items: center; min-width: 50px; }
-    .vote-btn { background: #2a2a2a; border: 1px solid #444; color: #888; cursor: pointer; padding: 2px 6px; font-size: 0.85rem; margin: 2px 0; border-radius: 3px; }
-    .vote-btn:hover { border-color: var(--accent-color); color: #fff; }
-    .vote-btn.active-up { background: #005533; color: var(--accent-color); border-color: var(--accent-color); font-weight: bold; }
-    .vote-btn.active-zero { background: #444411; color: #ffffaa; border-color: #ffff00; font-weight: bold; }
-    .vote-btn.active-down { background: #551111; color: #ff6666; border-color: #ff4444; font-weight: bold; }
-    .vote-score-label { font-size: 0.75rem; color: #777; margin-top: 4px; }
-    .vote-score { margin: 2px 0; font-weight: bold; font-size: 1.2rem; color: var(--accent-color); }
-
-    .post-content { flex: 1; }
-    .post-title { color: #82aaff; text-decoration: none; font-size: 1.15rem; font-weight: bold; cursor: pointer; }
-    .post-title:hover { text-decoration: underline; }
-    .post-url-preview { color: var(--accent-color); font-size: 0.9rem; margin-top: 4px; word-break: break-all; display: block; cursor: pointer; text-decoration: underline; }
-    .post-header { margin-bottom: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-    .topic-tag { color: #ffcb6b; font-size: 0.9rem; }
-    .region-tag { color: #ff80ab; font-size: 0.85rem; border: 1px solid #880e4f; padding: 1px 5px; border-radius: 3px; background: #260e1d; }
-    
-    .burst-body { background: #181818; border-left: 3px solid var(--accent-color); padding: 8px 10px; border-radius: 4px; margin-top: 8px; white-space: pre-wrap; word-break: break-word; color: #e0e0e0; font-size: 0.95rem; }
-    .dm-body { background: #251e30; border-left: 3px solid #bb86fc; padding: 8px 10px; border-radius: 4px; margin-top: 8px; white-space: pre-wrap; word-break: break-word; color: #f3e5f5; font-size: 0.95rem; }
-
-    .pubkey-display { font-family: monospace; color: #888; font-size: 0.85rem; user-select: all; word-break: break-all; background: #151515; padding: 2px 6px; border-radius: 3px; border: 1px solid #2a2a2a; }
-    .peer-item { font-size: 0.8rem; background: #151515; padding: 6px; margin-top: 4px; border-radius: 3px; border: 1px solid #2a2a2a; word-break: break-all; }
-
-    .action-row { display: flex; gap: 10px; margin-top: 8px; font-size: 0.8rem; flex-wrap: wrap; }
-    .action-btn { background: #2a2a2a; border: 1px solid #444; color: #aaa; cursor: pointer; padding: 2px 8px; border-radius: 3px; width: auto; }
-    .action-btn:hover { color: #fff; border-color: #666; }
-    .btn-save { color: #ffcb6b; border-color: #665500; }
-    .btn-unsave { color: #ff6666; border-color: #aa3333; }
-    .btn-mute { color: #ff6666; border-color: #aa3333; }
-    .btn-unmute { color: #66ff66; border-color: #33aa33; }
-
-    .font-resizer { display: flex; gap: 4px; align-items: center; margin-top: 6px; }
-    .btn-size { flex: 1; padding: 3px; background: #2a2a2a; border: 1px solid #444; color: var(--accent-color); cursor: pointer; font-weight: bold; font-size: 0.8rem; border-radius: 3px; }
-    .btn-size:hover { background: #004433; }
-
-    .nav-toggle-box { display: flex; gap: 3px; margin-top: 8px; flex-wrap: wrap; }
-    .nav-tab-btn { flex: 1; min-width: 38px; padding: 5px 2px; background: #222; border: 1px solid #444; color: #aaa; cursor: pointer; font-weight: bold; font-size: 0.55rem; border-radius: 4px; text-align: center; }
-    .nav-tab-btn.active { background: #004433; color: var(--accent-color); border-color: var(--accent-color); }
-
-    .control-label { font-size: 0.75rem; color: #888; margin-top: 6px; display: block; }
-    select { background: #f0f0f0; color: #111111; border: 1px solid #444; padding: 5px; margin-top: 3px; border-radius: 4px; width: 100%; font-size: 0.8rem; font-weight: bold; }
-    select option { background: #ffffff; color: #111111; }
-
-    .ai-box { border-color: #82aaff; }
-    .dm-card-box { border: 1px solid #bb86fc; }
-    .btn-dm-submit { background: #6a1b9a; color: white; cursor: pointer; font-weight: bold; margin-bottom: 0; }
-    .btn-dm-submit:hover { background: #8e24aa; }
-
-    .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0, 0, 0, 0.8); z-index: 999; justify-content: center; align-items: center; }
-    .modal-content { background: #1e1e1e; border: 1px solid var(--accent-color); padding: 20px; border-radius: 6px; width: 480px; max-height: 80vh; overflow-y: auto; }
-    .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 1px solid #333; padding-bottom: 10px; }
-    .btn-close-modal { background: #aa3333; color: white; border: none; padding: 4px 10px; cursor: pointer; border-radius: 3px; font-weight: bold; width: auto; margin-bottom: 0; }
-    .muted-item, .region-item { display: flex; justify-content: space-between; align-items: center; background: #181818; padding: 8px 12px; margin-top: 6px; border-radius: 4px; font-size: 0.9rem; }
-
-    .media-container { margin-top: 10px; background: #151515; border: 1px solid #2a2a2a; border-radius: 4px; padding: 8px; text-align: center; }
-    .media-preview-box { max-height: 260px; display: flex; align-items: center; justify-content: center; overflow: hidden; position: relative; }
-    .media-preview-box img { max-width: 100%; max-height: 240px; object-fit: contain; border-radius: 4px; }
-    .media-preview-box video { max-width: 100%; max-height: 240px; border-radius: 4px; }
-    
-    .yt-thumb-card { position: relative; cursor: pointer; width: 100%; max-height: 220px; overflow: hidden; display: flex; justify-content: center; align-items: center; border-radius: 4px; }
-    .yt-thumb-card img { width: 100%; object-fit: cover; }
-    .yt-play-btn { position: absolute; background: rgba(255, 0, 0, 0.85); color: white; padding: 8px 16px; border-radius: 6px; font-weight: bold; font-size: 0.9rem; border: 1px solid #ffffff; box-shadow: 0 0 10px rgba(0,0,0,0.8); }
-    .yt-play-btn:hover { background: #ff0000; }
-
-    .carousel-controls { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }
-    .carousel-btn { background: #2a2a2a; color: var(--accent-color); border: 1px solid #444; width: unset; cursor: pointer; padding: 4px 12px; }
-
-    input, textarea, button { background: #2a2a2a; color: #fff; border: 1px solid #444; padding: 6px 8px; margin-bottom: 6px; border-radius: 4px; width: 100%; box-sizing: border-box; font-family: monospace; font-size: 0.85rem; }
-    textarea { resize: none; }
-    .btn-submit { background: #008855; color: white; cursor: pointer; font-weight: bold; margin-bottom: 0; }
-  </style>
+                try {
+                    const res = await fetch('/api/rss/ingest', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ feed_url, region, tags: activeTags })
+                    });
+                    const data = await res.json();
+                    if (data.status === 'ok') {
+                        showToast(`Ingested ${data.count} items into ${region}`);
+                        await loadDirectMessages();
+                        fetchBroadcasts();
+                    } else {
+                        showToast("Failed to fetch RSS feed");
+                    }
+                } catch (err) {
+                    console.error("RSS fetch error:", err);
+                    showToast("Error fetching RSS feed");
+                } finally {
+                    rssIngestBtn.innerText = "Ingest RSS";
+                }
+            });
+        }
+    });
+    </script>
 </head>
-<body>
-  <h1>/// P2P LINK AGGREGATOR</h1>
-  <div class="layout">
-    
-    <div class="mini-taskbar">
-      <div class="traffic-lights" title="Node Activity Status">
-        <div class="traffic-light light-red" id="light-red" title="DHT Swarm Idle/Connecting"></div>
-        <div class="traffic-light light-yellow" id="light-yellow" title="Background Workers Syncing"></div>
-        <div class="traffic-light light-green" id="light-green" title="Active Mesh Pulse"></div>
-      </div>
-      <button class="taskbar-btn" onclick="toggleSidebar()" title="Toggle Sidebar Drawer">◀</button>
+<body class="bg-slate-950 text-slate-100 font-sans min-h-screen">
+    <div id="app-shell" class="flex h-screen overflow-hidden">
+        <!-- Sidebar Navigation -->
+        <aside id="app-sidebar" class="w-64 bg-slate-900 border-r border-slate-800 p-4 flex flex-col justify-between select-none">
+            <div class="sidebar-main">
+                <div class="sidebar-heading">
+                    <div class="sidebar-brand">
+                        <span class="w-3 h-3 rounded-full bg-emerald-500 animate-pulse" aria-hidden="true"></span>
+                        <h1 class="sidebar-brand-title font-bold text-lg text-slate-100 tracking-wide">Mesh Station</h1>
+                    </div>
+                    <button id="sidebar-collapse-btn" type="button" class="sidebar-collapse-btn" aria-label="Collapse sidebar" aria-expanded="true" title="Collapse sidebar">
+                        <span id="sidebar-collapse-icon" aria-hidden="true">‹</span>
+                    </button>
+                </div>
+                <nav class="space-y-1">
+                    <button data-tab="tab-comms" title="Mesh Comms" class="nav-tab-btn w-full text-left flex items-center space-x-3 px-3 py-2 rounded-lg bg-blue-600/20 text-blue-400 font-medium text-sm cursor-pointer">
+                        <span class="nav-icon" aria-hidden="true">📡</span><span class="nav-label">Mesh Comms</span>
+                    </button>
+                    <button id="open-peers-btn" title="Node Topology" class="w-full text-left flex items-center space-x-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 text-sm cursor-pointer">
+                        <span class="nav-icon" aria-hidden="true">🌐</span><span class="nav-label">Node Topology</span>
+                    </button>
+                    <button data-tab="tab-dm" title="Direct Replies" class="nav-tab-btn w-full text-left flex items-center space-x-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 text-sm cursor-pointer">
+                        <span class="nav-icon" aria-hidden="true">✉</span><span class="nav-label">Direct Replies</span><span id="dm-unread-count" class="nav-badge">0</span>
+                    </button>
+                    <button data-tab="tab-ai" title="Local AI Pipeline" class="nav-tab-btn w-full text-left flex items-center space-x-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 text-sm cursor-pointer">
+                        <span class="nav-icon" aria-hidden="true">🧠</span><span class="nav-label">Local AI Pipeline</span>
+                    </button>
+                    <button data-tab="tab-rss" title="RSS Ingestion" class="nav-tab-btn w-full text-left flex items-center space-x-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 text-sm cursor-pointer">
+                        <span class="nav-icon" aria-hidden="true">📰</span><span class="nav-label">RSS Ingestion</span>
+                    </button>
+                    <button data-tab="tab-saved" title="Saved Cards" class="nav-tab-btn w-full text-left flex items-center space-x-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 text-sm cursor-pointer">
+                        <span class="nav-icon" aria-hidden="true">🔖</span><span class="nav-label">Saved Cards</span><span id="sidebar-saved-count" class="nav-badge">0</span>
+                    </button>
+                </nav>
+                <div class="sidebar-activity" aria-label="Network activity">
+                    <div class="activity-row" title="Connected peers">
+                        <span id="peer-activity-light" class="activity-light" aria-hidden="true"></span>
+                        <span class="activity-label">Peers <span id="peer-activity-count">0</span></span>
+                    </div>
+                    <div class="activity-row" title="Replies waiting to send">
+                        <span id="outbox-activity-light" class="activity-light" aria-hidden="true"></span>
+                        <span class="activity-label">Outbox <span id="outbox-activity-count">0</span></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Hardware & Telemetry Widget -->
+            <div id="sidebar-telemetry" class="border-t border-slate-800 pt-3 space-y-2 text-xs font-mono">
+                <div class="text-slate-400 font-semibold uppercase text-[10px] tracking-wider mb-1">Server Hardware Monitor</div>
+                
+                <div>
+                    <div class="flex justify-between text-slate-400 text-[11px] mb-1">
+                        <span>CPU Load</span>
+                        <span id="telemetry-cpu">--%</span>
+                    </div>
+                    <div class="w-full bg-slate-800 h-1.5 rounded overflow-hidden">
+                        <div id="bar-cpu" class="bg-blue-500 h-full w-0 transition-all duration-500"></div>
+                    </div>
+                </div>
+
+                <div>
+                    <div class="flex justify-between text-slate-400 text-[11px] mb-1">
+                        <span>RAM Usage</span>
+                        <span id="telemetry-ram">-- / -- MB</span>
+                    </div>
+                    <div class="w-full bg-slate-800 h-1.5 rounded overflow-hidden">
+                        <div id="bar-ram" class="bg-emerald-500 h-full w-0 transition-all duration-500"></div>
+                    </div>
+                </div>
+
+                <div>
+                    <div class="flex justify-between text-slate-400 text-[11px] mb-1">
+                        <span id="telemetry-gpu-label">GPU VRAM</span>
+                        <span id="telemetry-vram">-- / -- MB</span>
+                    </div>
+                    <div class="w-full bg-slate-800 h-1.5 rounded overflow-hidden">
+                        <div id="bar-vram" class="bg-amber-500 h-full w-0 transition-all duration-500"></div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Workspace View Container -->
+        <main class="flex-1 overflow-y-auto p-6 bg-slate-950">
+            <div class="max-w-3xl mx-auto">
+                
+                <!-- Tab 1: Mesh Comms -->
+                <div id="tab-comms" class="tab-content space-y-6">
+                    <div class="flex justify-between items-center pb-4 border-b border-slate-800">
+                        <div>
+                            <h2 class="text-xl font-bold text-slate-100">Mesh Broadcast Ledger</h2>
+                            <p class="text-xs text-slate-400 font-mono">Peer-to-Peer Broadcasts and Replies</p>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <label class="text-xs font-mono text-slate-400">Model:</label>
+                            <select id="ai-model-select" onchange="setActiveModel(this.value)" class="bg-slate-900 border border-slate-700 text-xs font-mono text-amber-300 rounded px-2 py-1.5 focus:outline-none focus:border-amber-500 font-bold cursor-pointer">
+                                <option value="gemma3:4b">gemma3:4b</option>
+                            </select>
+                            <button id="refresh-btn" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-mono text-xs rounded shadow transition cursor-pointer">
+                                Refresh Mesh
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Region Filters -->
+                    <div class="flex space-x-2">
+                        <button data-region="#global" class="region-filter-btn px-3 py-1 text-xs font-mono rounded bg-blue-600 text-white font-semibold cursor-pointer">#global</button>
+                        <button data-region="#pottstown" class="region-filter-btn px-3 py-1 text-xs font-mono rounded bg-slate-800 text-slate-300 hover:bg-slate-700 cursor-pointer">#pottstown</button>
+                        <button data-region="#tech" class="region-filter-btn px-3 py-1 text-xs font-mono rounded bg-slate-800 text-slate-300 hover:bg-slate-700 cursor-pointer">#tech</button>
+                    </div>
+
+                    <!-- Transmit Mesh Broadcast Box -->
+                    <div class="p-4 bg-slate-900 border border-slate-800 rounded-lg shadow-md">
+                        <div class="flex items-center justify-between gap-2 mb-2">
+                            <h3 class="text-xs font-mono font-semibold text-slate-300 uppercase tracking-wider">Transmit Mesh Broadcast</h3>
+                            <span id="broadcast-byte-count" class="text-[10px] font-mono text-slate-500">0 / 3000 bytes</span>
+                        </div>
+                        <div class="space-y-3">
+                            <textarea id="broadcast-input" rows="2" maxlength="3000" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-sm font-mono text-slate-200 focus:outline-none focus:border-blue-600" placeholder="Type transmission content or magnet links..."></textarea>
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center space-x-2">
+                                    <select id="broadcast-region" class="bg-slate-950 border border-slate-800 text-xs font-mono text-slate-300 rounded p-1.5 focus:outline-none focus:border-blue-600">
+                                        <option value="#global">#global</option>
+                                        <option value="#pottstown">#pottstown</option>
+                                        <option value="#tech">#tech</option>
+                                    </select>
+                                    <select id="broadcast-type" class="bg-slate-950 border border-slate-800 text-xs font-mono text-slate-300 rounded p-1.5 focus:outline-none focus:border-blue-600">
+                                        <option value="human">human</option>
+                                        <option value="node">node</option>
+                                        <option value="ai">ai</option>
+                                    </select>
+                                </div>
+                                <button id="send-broadcast-btn" class="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-mono text-xs rounded transition-colors cursor-pointer">Broadcast</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Mesh Cards Container -->
+                    <div id="mesh-feed-container" class="space-y-4">
+                        <div class="p-4 text-center text-slate-500 font-mono text-sm">Loading mesh broadcasts from SQLite...</div>
+                    </div>
+                </div>
+
+                <div id="tab-dm" class="tab-content hidden space-y-6">
+                    <div class="pb-4 border-b border-slate-800">
+                        <h2 class="text-xl font-bold text-slate-100">Direct Replies</h2>
+                        <p class="text-xs text-slate-400 font-mono">Reply to peers using the session ID shown on their broadcasts.</p>
+                    </div>
+                    <div class="p-3 bg-amber-950/40 border border-amber-800/50 rounded text-xs font-mono text-amber-200">
+                        LAN prototype: messages are not encrypted. Use only on a trusted network.
+                    </div>
+                    <div class="p-3 bg-slate-900 border border-slate-800 rounded">
+                        <div class="text-[10px] uppercase font-mono text-slate-400">Your session ID</div>
+                        <code id="local-peer-id" class="block mt-1 break-all text-xs font-mono text-emerald-300">Loading...</code>
+                    </div>
+                    <div class="p-4 bg-slate-900 border border-slate-800 rounded space-y-3">
+                        <div>
+                            <h3 class="text-xs font-mono font-bold text-slate-300 uppercase">Local identity names</h3>
+                            <p class="mt-1 text-[10px] font-mono text-slate-500">Names are saved only in this browser and are never sent to peers.</p>
+                        </div>
+                        <label class="block text-xs font-mono text-slate-400" for="contact-peer-id">Sender session ID</label>
+                        <input id="contact-peer-id" type="text" autocomplete="off" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-xs font-mono text-slate-200" placeholder="Choose Add local name on a message">
+                        <label class="block text-xs font-mono text-slate-400" for="contact-name">Real name to show</label>
+                        <input id="contact-name" type="text" maxlength="80" autocomplete="off" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-sm text-slate-200" placeholder="Name (optional)">
+                        <div class="flex flex-wrap gap-2">
+                            <button id="save-local-name-btn" class="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white font-mono text-xs rounded cursor-pointer">Save on this device</button>
+                            <button id="remove-local-name-btn" class="px-3 py-1.5 bg-slate-800 text-slate-300 font-mono text-xs rounded cursor-pointer" disabled>Remove name</button>
+                        </div>
+                    </div>
+                    <div class="p-4 bg-slate-900 border border-slate-800 rounded space-y-3">
+                        <h3 class="text-xs font-mono font-bold text-slate-300 uppercase">Compose a direct reply</h3>
+                        <label class="block text-xs font-mono text-slate-400" for="dm-recipient-input">Recipient session ID</label>
+                        <input id="dm-recipient-input" type="text" autocomplete="off" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-xs font-mono text-slate-200" placeholder="Choose Reply privately on a broadcast">
+                        <input id="dm-reply-to-input" type="hidden">
+                        <div class="flex items-center justify-between gap-2 text-[10px] font-mono">
+                            <label class="text-slate-400" for="dm-input">Message</label>
+                            <span id="dm-byte-count" class="text-slate-500">0 / 3000 bytes</span>
+                        </div>
+                        <textarea id="dm-input" rows="3" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-sm font-mono text-slate-200" placeholder="Write your reply..."></textarea>
+                        <p class="text-[10px] font-mono text-slate-500">Direct replies are limited to 3000 bytes. Use torrent sharing for larger media.</p>
+                        <label class="flex flex-wrap items-center gap-2 text-xs font-mono text-slate-400" for="dm-queue-ttl">
+                            Keep unsent reply for
+                            <select id="dm-queue-ttl" class="bg-slate-950 border border-slate-800 rounded p-1.5 text-slate-200">
+                                <option value="60">1 minute</option>
+                                <option value="300">5 minutes</option>
+                                <option value="900" selected>15 minutes</option>
+                                <option value="3600">1 hour</option>
+                                <option value="21600">6 hours</option>
+                                <option value="86400">24 hours</option>
+                            </select>
+                        </label>
+                        <p class="text-[10px] font-mono text-slate-500">Unsent replies stay in memory only. Keep this app running; expired replies are discarded.</p>
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                            <span id="dm-send-status" class="text-xs font-mono text-slate-400" role="status"></span>
+                            <button id="send-dm-btn" class="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-mono text-xs rounded cursor-pointer">Send reply</button>
+                        </div>
+                    </div>
+                    <div>
+                        <h3 class="text-xs font-mono font-bold text-slate-300 uppercase mb-2">Inbox and sent replies</h3>
+                        <div id="dm-inbox-container" class="space-y-3">
+                            <div class="p-4 text-center text-slate-500 font-mono text-sm">Loading messages...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab 2: Local AI Pipeline -->
+                <div id="tab-ai" class="tab-content hidden space-y-6">
+                    <div class="pb-4 border-b border-slate-800">
+                        <h2 class="text-xl font-bold text-slate-100">Local AI Pipeline</h2>
+                        <p class="text-xs text-slate-400 font-mono">Click any model card below to set it as the active LLM engine</p>
+                    </div>
+
+                    <div class="p-4 bg-slate-900 border border-slate-800 rounded-lg space-y-3">
+                        <h3 class="text-xs font-mono font-bold text-slate-300 uppercase tracking-wider">Discovered Local LLM Engine Models</h3>
+                        <div id="ai-models-list" class="grid grid-cols-2 gap-2 text-xs font-mono text-slate-300">
+                            <div class="p-2 bg-slate-950 border border-slate-800 rounded">Querying Ollama API...</div>
+                        </div>
+                    </div>
+
+                    <div class="p-4 bg-slate-900 border border-slate-800 rounded-lg space-y-3">
+                        <div class="flex justify-between items-center">
+                            <h3 class="text-xs font-mono font-bold text-slate-300 uppercase tracking-wider">Test AI Prompt Sandbox</h3>
+                            <div class="flex items-center space-x-2">
+                                <span class="text-xs font-mono text-slate-400">Target Model:</span>
+                                <select id="sandbox-model-select" onchange="setActiveModel(this.value)" class="bg-slate-950 border border-slate-700 text-xs font-mono text-amber-300 rounded px-2 py-1 font-bold focus:outline-none cursor-pointer">
+                                    <option value="gemma3:4b">gemma3:4b</option>
+                                </select>
+                            </div>
+                        </div>
+                        <textarea id="ai-test-prompt" rows="3" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-amber-500" placeholder="Type a prompt to test your local LLM..."></textarea>
+                        <div class="flex justify-end items-center">
+                            <button id="ai-test-run-btn" class="px-4 py-1.5 bg-amber-600 hover:bg-amber-500 text-white font-mono text-xs rounded transition cursor-pointer">Run Inference</button>
+                        </div>
+                        <div id="ai-test-output" class="hidden p-3 bg-slate-950 border border-slate-800 rounded text-xs font-mono text-amber-300"></div>
+                    </div>
+                </div>
+
+                <!-- Tab 4: Saved Reading List -->
+                <div id="tab-saved" class="tab-content hidden space-y-6">
+                    <div class="pb-4 border-b border-slate-800 flex justify-between items-center">
+                        <div>
+                            <h2 class="text-xl font-bold text-slate-100">Saved Cards</h2>
+                            <p class="text-xs text-slate-400 font-mono">Bookmarked mesh and RSS items stored locally in the app</p>
+                        </div>
+                        <button onclick="clearAllSaved()" class="px-3 py-1 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-800/50 font-mono text-xs rounded transition cursor-pointer">
+                            Clear All Bookmarks
+                        </button>
+                    </div>
+                    <div id="saved-feed-container" class="space-y-4">
+                        <div class="p-4 text-center text-slate-500 font-mono text-sm">No bookmarked cards yet. Click 'Save Card' on any mesh broadcast!</div>
+                    </div>
+                </div>
+
+                <!-- Tab 3: RSS Ingestion -->
+                <div id="tab-rss" class="tab-content hidden space-y-6">
+                    <div class="pb-4 border-b border-slate-800 flex justify-between items-center">
+                        <div>
+                            <h2 class="text-xl font-bold text-slate-100">RSS / Atom Feed Ingestion</h2>
+                            <p class="text-xs text-slate-400 font-mono">Convert web news feeds directly into mesh broadcasts</p>
+                        </div>
+                        <button onclick="switchView()" id="view-toggle-btn" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 font-mono text-xs rounded transition cursor-pointer">
+                            🔖 View Saved Cards (<span id="saved-count">0</span>)
+                        </button>
+                    </div>
+
+                    <!-- Preset Feeds Bar -->
+                    <div class="p-3 bg-slate-900 border border-slate-800 rounded-lg space-y-2">
+                        <div class="text-[10px] font-mono uppercase tracking-wider text-slate-400 font-bold">Quick Presets / Saved Feeds</div>
+                        <div class="flex flex-wrap gap-2">
+                            <button onclick="setPresetFeed('https://news.ycombinator.com/rss', '#tech')" class="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-xs font-mono text-amber-400 rounded transition cursor-pointer">Hacker News</button>
+                            <button onclick="setPresetFeed('https://feeds.bbci.co.uk/news/rss.xml', '#global')" class="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-xs font-mono text-blue-400 rounded transition cursor-pointer">BBC News</button>
+                            <button onclick="setPresetFeed('https://www.kernel.org/feeds/atom.xml', '#tech')" class="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-xs font-mono text-emerald-400 rounded transition cursor-pointer">Linux Kernel</button>
+                            <button onclick="setPresetFeed('https://www.reddit.com/r/linux/.rss', '#tech')" class="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-xs font-mono text-purple-400 rounded transition cursor-pointer">r/linux</button>
+                        </div>
+                    </div>
+
+                    <div class="p-4 bg-slate-900 border border-slate-800 rounded-lg space-y-4">
+                        <h3 class="text-sm font-mono font-bold text-slate-200">Ingest Feed into Mesh Ledger</h3>
+                        <div class="space-y-3">
+                            <div>
+                                <label class="text-xs font-mono text-slate-400">RSS / Atom Feed URL:</label>
+                                <input id="rss-url-input" type="text" value="https://news.ycombinator.com/rss" class="w-full mt-1 bg-slate-950 border border-slate-800 rounded p-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-blue-600">
+                            </div>
+                            <div class="flex items-center justify-between gap-2">
+                                <div class="flex items-center space-x-2">
+                                    <select id="rss-target-region" class="bg-slate-950 border border-slate-800 text-xs font-mono text-slate-300 rounded p-1.5 cursor-pointer">
+                                        <option value="#tech">#tech</option>
+                                        <option value="#global">#global</option>
+                                        <option value="#pottstown">#pottstown</option>
+                                    </select>
+                                    
+                                    <!-- Multi-Tag Pill Container -->
+                                    <div id="tag-pills-container" class="flex flex-wrap gap-1.5 items-center">
+                                        <button type="button" onclick="toggleTag(this)" data-tag="rss" class="tag-pill px-2 py-1 bg-amber-600 text-white text-[11px] font-mono rounded cursor-pointer transition">#rss</button>
+                                        <button type="button" onclick="toggleTag(this)" data-tag="news" class="tag-pill px-2 py-1 bg-slate-800 text-slate-400 text-[11px] font-mono rounded cursor-pointer transition">#news</button>
+                                        <button type="button" onclick="toggleTag(this)" data-tag="linux" class="tag-pill px-2 py-1 bg-slate-800 text-slate-400 text-[11px] font-mono rounded cursor-pointer transition">#linux</button>
+                                        <button type="button" onclick="addCustomTagPrompt()" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-blue-400 text-[11px] font-mono rounded cursor-pointer">+ Add Tag</button>
+                                    </div>
+                                </div>
+                                <button id="rss-ingest-btn" class="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-mono text-xs rounded cursor-pointer">Fetch & Ingest Feed</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </main>
     </div>
 
-    <div class="sidebar" id="app-sidebar">
-      <div class="card" style="border-color: #82aaff;">
-        <button class="action-btn" style="width:100%; font-weight:bold; border-color:#82aaff; color:#82aaff; margin-bottom:0;" onclick="openSettingsModal()">⚙️ Human Preferences & Settings</button>
-      </div>
-
-      <div class="card" style="border-color: #ff80ab;">
-        <h3 style="margin:0 0 5px 0; color:#ff80ab; font-size:0.95rem;">🗺️ REGIONS & MESH ZONES</h3>
-        <div style="font-size:0.8rem; color:#aaa;">Active Region: <strong id="active-region-label" style="color:var(--accent-color);">GLOBAL</strong></div>
-        <button class="action-btn" style="width:100%; margin-top:6px; font-weight:bold; border-color:#ff80ab; color:#ff80ab;" onclick="openRegionModal()">🌐 Join / Switch Regions</button>
-      </div>
-
-      <div class="card" style="border-color: #ffcb6b;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-          <h3 style="margin:0; color:#ffcb6b; font-size:0.95rem;">🏷️ TOPICS</h3>
-          <button class="action-btn" style="font-size:0.7rem; padding:2px 5px; border-color:#ffcb6b; color:#ffcb6b;" onclick="openTopicsWindow()">🪟 Manager</button>
+    <!-- Node Topology Modal -->
+    <div id="peers-modal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm hidden flex items-center justify-center z-50">
+        <div class="bg-slate-900 border border-slate-800 rounded-lg p-6 w-full max-w-lg shadow-2xl space-y-4">
+            <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+                <h3 class="text-sm font-mono font-bold text-slate-200">Active Peer Topology</h3>
+                <button id="close-peers-btn" class="text-slate-400 hover:text-slate-200 font-mono text-xs cursor-pointer">✕</button>
+            </div>
+            <div id="peers-list" class="space-y-2 font-mono text-xs">
+                <div class="text-slate-500">Querying peer list...</div>
+            </div>
         </div>
-        <div style="font-size:0.75rem; color:#aaa;">Active Topic: <strong id="active-topic-label" style="color:#ffcb6b;">#ALL</strong></div>
-      </div>
-
-      <div class="card" style="border-color: #00ffcc;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-          <h3 style="margin:0; color:#00ffcc; font-size:0.95rem;">📦 FILE & TORRENT SWARM</h3>
-          <button class="action-btn" style="font-size:0.7rem; padding:2px 5px; border-color:#00ffcc; color:#00ffcc;" onclick="openFilesWindow()">🪟 Open</button>
-        </div>
-        <div style="font-size:0.75rem; color:#aaa; margin-top:4px;">Share offline dumps & magnet links.</div>
-      </div>
-
-      <div class="card" style="border-color: #ff80ab;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-          <h3 style="margin:0; color:#ff80ab; font-size:0.95rem;">🕸️ KNOWLEDGE GRAPH</h3>
-          <button class="action-btn" style="font-size:0.7rem; padding:2px 5px; border-color:#ff80ab; color:#ff80ab;" onclick="openGraphWindow()">🪟 View</button>
-        </div>
-        <div style="font-size:0.75rem; color:#aaa; margin-top:4px;">Visual stream & peer mapping.</div>
-      </div>
-
-      <div class="card" style="border-color: var(--accent-color);">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-          <h3 style="margin:0; color:var(--accent-color); font-size:0.95rem;">🟢 PEERS (<span id="peer-count">0</span>)</h3>
-          <button class="action-btn" style="font-size:0.7rem; padding:2px 5px; border-color:var(--accent-color); color:var(--accent-color);" onclick="openPeersWindow()">🪟 Pop Out</button>
-        </div>
-        <div id="connected-peers-list" style="max-height: 80px; overflow-y: auto;">
-          <div style="font-size: 0.75rem; color: #777;">Scanning swarm peers...</div>
-        </div>
-      </div>
-
-      <div class="card">
-        <h3 style="margin:0 0 5px 0; font-size:0.95rem;">Network Feeds & Streams</h3>
-        
-        <div class="nav-toggle-box">
-          <button id="tab-live" class="nav-tab-btn active" onclick="switchView('live')">Users</button>
-          <button id="tab-wiki" class="nav-tab-btn" onclick="switchView('wiki-stream')">Wiki</button>
-          <button id="tab-tech" class="nav-tab-btn" onclick="switchView('tech-stream')">Tech</button>
-          <button id="tab-code" class="nav-tab-btn" onclick="switchView('code-stream')">Code</button>
-          <button id="tab-archive" class="nav-tab-btn" onclick="switchView('archive-stream')">Archive</button>
-          <button id="tab-saved" class="nav-tab-btn" onclick="switchView('saved')">Saved</button>
-        </div>
-
-        <span class="control-label">TEXT SIZE:</span>
-        <div class="font-resizer">
-          <button class="btn-size" onclick="adjustFontSize(-1)">A-</button>
-          <button class="btn-size" onclick="resetFontSize()">Reset</button>
-          <button class="btn-size" onclick="adjustFontSize(1)">A+</button>
-        </div>
-
-        <span class="control-label">REFRESH SPEED:</span>
-        <select id="speed-selector" onchange="updateRefreshSpeed()">
-          <option value="0">Manual (Off)</option>
-          <option value="1000">Fast (1 sec)</option>
-          <option value="5000" selected>Normal (5 sec)</option>
-          <option value="10000">Slow (10 sec)</option>
-        </select>
-
-        <span class="control-label">CARD CAPACITY:</span>
-        <select id="capacity-selector" onchange="updateCardCapacity()">
-          <option value="25" selected>Standard (25 Cards)</option>
-          <option value="100">Super (100 Cards)</option>
-        </select>
-      </div>
-
-      <div class="card" style="border-color: #552222;">
-        <button class="action-btn btn-mute" style="width:100%; font-weight:bold; padding:6px; margin-bottom:0;" onclick="openMuteModal()">🔇 Muted Peers (<span id="mute-count">0</span>)</button>
-      </div>
-
-      <div class="card ai-box">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-          <h3 style="margin:0; color:#82aaff; font-size:0.95rem;">🤖 PERSISTENT AI AGENTS</h3>
-          <button class="action-btn" style="font-size:0.7rem; padding:2px 5px; border-color:#82aaff; color:#82aaff;" onclick="openAiManagerWindow()">⚙️ Manager</button>
-        </div>
-        <div style="font-size:0.75rem; color:#aaa; margin-top:4px;">Manage scheduled background LLM workers.</div>
-      </div>
-
-      <div class="card">
-        <h3 style="margin:0 0 5px 0; color:var(--accent-color); font-size:0.95rem;">/// PUBLIC MESH BURST</h3>
-        <input type="text" id="text-burst-topic" placeholder="Topic (default: general)">
-        <input type="text" id="text-burst-region" placeholder="Target Region">
-        <textarea id="text-burst-body" rows="2" placeholder="Public note..."></textarea>
-        <button class="btn-submit" onclick="sendTextBurst()">Send Public Burst</button>
-      </div>
-
-      <div class="card dm-card-box">
-        <h3 style="margin:0 0 5px 0; color:#e1bee7; font-size:0.95rem;">🔒 DIRECT PEER MESSAGE</h3>
-        <input type="text" id="dm-recipient-pubkey" placeholder="Recipient Public Key">
-        <textarea id="dm-body" rows="2" placeholder="Private message..."></textarea>
-        <button class="btn-dm-submit" onclick="sendDirectMessage()">Send Private DM</button>
-      </div>
-
-      <div class="card">
-        <h3 style="margin:0 0 5px 0; font-size:0.95rem;">Submit New Link</h3>
-        <input type="text" id="post-title" placeholder="Title">
-        <input type="text" id="post-url" placeholder="URL (https://...)">
-        <input type="text" id="post-media" placeholder="Optional Media URL">
-        <input type="text" id="post-topic" placeholder="Topic">
-        <input type="text" id="post-region" placeholder="Region">
-        <button class="btn-submit" onclick="submitPost()">Publish Link</button>
-      </div>
     </div>
 
-    <div class="main-content">
-      <div class="feed-scroll-area" id="feed-container">Connecting to local database...</div>
-    </div>
+    <script>
+        let allBroadcasts = [];
+        let availableModels = [];
+        let activeRegion = '#global';
+        let selectedModel = 'gemma3:4b';
+        let savedCardIds = JSON.parse(localStorage.getItem('mesh_saved_cards') || '[]');
+        let localPeerId = '';
+        let livePeerIds = new Set();
+        let sidebarCollapsed = localStorage.getItem('mesh_sidebar_collapsed') === 'true';
+        const LOCAL_CONTACTS_KEY = 'mesh_local_contact_names';
+        const MAX_BROADCAST_BYTES = 3000;
+        const MAX_DIRECT_MESSAGE_BYTES = 3000;
+        let localContactNames = loadLocalContactNames();
 
-  </div>
-
-  <div id="settings-modal" class="modal-overlay">
-    <div class="modal-content" style="border-color:#82aaff;">
-      <div class="modal-header">
-        <h3 style="margin:0; color:#82aaff;">⚙️ HUMAN PREFERENCES & SETTINGS</h3>
-        <button class="btn-close-modal" onclick="closeSettingsModal()">✕ Close</button>
-      </div>
-
-      <div style="margin-bottom: 12px;">
-        <span class="control-label">MASTER FONT SIZE (PX):</span>
-        <input type="range" id="settings-font-slider" min="11" max="20" value="14" oninput="previewFontSize(this.value)">
-        <span id="font-size-val" style="font-size:0.8rem; color:var(--accent-color);">14px</span>
-      </div>
-
-      <div style="margin-bottom: 12px;">
-        <span class="control-label">ACCENT COLOR THEME:</span>
-        <select id="settings-accent-select" style="background:#2a2a2a; color:#fff;">
-          <option value="#00ffcc">Cyberpunk Teal (#00ffcc)</option>
-          <option value="#82aaff">Matrix Blue (#82aaff)</option>
-          <option value="#ff80ab">Neon Pink (#ff80ab)</option>
-          <option value="#ffcb6b">Amber Gold (#ffcb6b)</option>
-        </select>
-      </div>
-
-      <div style="margin-bottom: 15px;">
-        <span class="control-label">INTERFACE THEME:</span>
-        <select id="settings-theme-select" style="background:#2a2a2a; color:#fff;">
-          <option value="dark-cyberpunk">Dark Cyberpunk (Default)</option>
-          <option value="oled-black">OLED Pure Black</option>
-          <option value="soft-slate">Soft Slate Gray</option>
-        </select>
-      </div>
-
-      <button class="btn-submit" style="width:100%; background:#1a237e;" onclick="saveAndApplySettings()">💾 Save & Apply Preferences</button>
-    </div>
-  </div>
-
-  <div id="region-modal" class="modal-overlay">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h3 style="margin:0; color:#ff80ab;">🗺️ JOIN / SWITCH MESH REGIONS</h3>
-        <button class="btn-close-modal" onclick="closeRegionModal()">✕ Close</button>
-      </div>
-      
-      <div style="margin-bottom:15px;">
-        <span class="control-label">CUSTOM / NEW REGION:</span>
-        <div style="display:flex; gap:8px; margin-top:4px;">
-          <input type="text" id="custom-region-input" placeholder="e.g. pottstown-mesh, us-east" style="margin-bottom:0;">
-          <button class="btn-submit" style="width:auto; padding:0 15px;" onclick="joinCustomRegion()">Join</button>
-        </div>
-      </div>
-
-      <span class="control-label">POPULAR REGIONAL CHANNELS:</span>
-      <div id="preset-regions-list">
-        <div class="region-item">
-          <span>🌐 GLOBAL (All Regions)</span>
-          <button class="action-btn" onclick="selectRegion('global')">Select</button>
-        </div>
-        <div class="region-item">
-          <span>📍 POTTSTOWN-MESH</span>
-          <button class="action-btn" onclick="selectRegion('pottstown-mesh')">Join</button>
-        </div>
-        <div class="region-item">
-          <span>📍 US-EAST</span>
-          <button class="action-btn" onclick="selectRegion('us-east')">Join</button>
-        </div>
-        <div class="region-item">
-          <span>📍 OFFGRID-GRID</span>
-          <button class="action-btn" onclick="selectRegion('offgrid-grid')">Join</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div id="mute-modal" class="modal-overlay">
-    <div class="modal-content" style="border-color:#ff6666;">
-      <div class="modal-header">
-        <h3 style="margin:0; color:#ff6666;">🔇 MUTED PEERS MANAGEMENT</h3>
-        <button class="btn-close-modal" onclick="closeMuteModal()">✕ Close</button>
-      </div>
-      <div id="muted-peers-modal-list">No muted peers.</div>
-    </div>
-  </div>
-
-  <script>
-    const userVoteStates = {};
-    const mutedAuthors = new Set();
-    const mediaIndices = {};
-    let currentTab = 'live';
-    let activeTopicFilter = 'all';
-    let cardCapacity = 25;
-    let currentFontSizePx = 14;
-    let refreshIntervalTimer = null;
-    let peerPollTimer = null;
-    let activeRegion = 'global';
-
-    async function invokeCmd(cmd, args = {}) {
-      if (window.__TAURI__ && window.__TAURI__.core) {
-        return await window.__TAURI__.core.invoke(cmd, args);
-      }
-    }
-
-    function toggleSidebar() {
-      const sidebar = document.getElementById('app-sidebar');
-      sidebar.classList.toggle('collapsed');
-      const btn = document.querySelector('.taskbar-btn');
-      btn.innerText = sidebar.classList.contains('collapsed') ? '▶' : '◀';
-    }
-
-    async function openPeersWindow() {
-      if (window.__TAURI__ && window.__TAURI__.webviewWindow) {
-        try {
-          const webview = new window.__TAURI__.webviewWindow.WebviewWindow('peers-monitor', {
-            url: 'peers.html',
-            title: 'Mesh Network & Peer Monitor',
-            width: 460,
-            height: 500
-          });
-        } catch (e) {
-          console.error("Failed to open secondary window:", e);
+        function loadLocalContactNames() {
+            try {
+                const names = JSON.parse(localStorage.getItem(LOCAL_CONTACTS_KEY) || '{}');
+                return names && typeof names === 'object' && !Array.isArray(names) ? names : {};
+            } catch (e) {
+                return {};
+            }
         }
-      } else {
-        window.open('peers.html', '_blank', 'width=460,height=500');
-      }
-    }
 
-    async function openTopicsWindow() {
-      if (window.__TAURI__ && window.__TAURI__.webviewWindow) {
-        try {
-          const webview = new window.__TAURI__.webviewWindow.WebviewWindow('topics-manager', {
-            url: 'topics.html',
-            title: 'Mesh Topics & Sub-Streams',
-            width: 400,
-            height: 420
-          });
-        } catch (e) {
-          console.error("Failed to open topics window:", e);
-        }
-      } else {
-        window.open('topics.html', '_blank', 'width=400,height=420');
-      }
-    }
-
-    async function openFilesWindow() {
-      if (window.__TAURI__ && window.__TAURI__.webviewWindow) {
-        try {
-          const webview = new window.__TAURI__.webviewWindow.WebviewWindow('file-swarm', {
-            url: 'files.html',
-            title: 'P2P File & Torrent Swarm',
-            width: 500,
-            height: 540
-          });
-        } catch (e) {
-          console.error("Failed to open files window:", e);
-        }
-      } else {
-        window.open('files.html', '_blank', 'width=500,height=540');
-      }
-    }
-
-    async function openGraphWindow() {
-      if (window.__TAURI__ && window.__TAURI__.webviewWindow) {
-        try {
-          const webview = new window.__TAURI__.webviewWindow.WebviewWindow('knowledge-graph', {
-            url: 'graph.html',
-            title: 'Knowledge Graph Visualizer',
-            width: 600,
-            height: 500
-          });
-        } catch (e) {
-          console.error("Failed to open graph window:", e);
-        }
-      } else {
-        window.open('graph.html', '_blank', 'width=600,height=500');
-      }
-    }
-
-    async function openAiManagerWindow() {
-      if (window.__TAURI__ && window.__TAURI__.webviewWindow) {
-        try {
-          const webview = new window.__TAURI__.webviewWindow.WebviewWindow('ai-manager', {
-            url: 'ai_manager.html',
-            title: 'Persistent AI Agent Manager',
-            width: 520,
-            height: 600
-          });
-        } catch (e) {
-          console.error("Failed to open AI manager window:", e);
-        }
-      } else {
-        window.open('ai_manager.html', '_blank', 'width=520,height=600');
-      }
-    }
-
-    const modal = document.getElementById('stream-manager-modal');
-    const openBtn = document.getElementById('open-stream-manager-btn');
-    const closeBtn = document.getElementById('stream-close-modal-btn');
-    const form = document.getElementById('stream-form');
-    const listContainer = document.getElementById('streams-list-container');
-    const cancelBtn = document.getElementById('stream-cancel-btn');
-
-    if (openBtn && closeBtn && modal) {
-        openBtn.onclick = () => { modal.style.display = 'flex'; loadStreams(); };
-        closeBtn.onclick = () => { modal.style.display = 'none'; };
-    }
-
-    async function loadStreams() {
-        try {
-            const { invoke } = window.__TAURI__.core;
-            const streams = await invoke('get_user_feeds');
-            listContainer.innerHTML = '';
-            if (streams.length === 0) {
-                listContainer.innerHTML = '<span style="color:#666; font-size:12px;">No custom streams saved yet.</span>';
+        function saveLocalContactName() {
+            const peerId = document.getElementById('contact-peer-id').value.trim();
+            const name = document.getElementById('contact-name').value.trim();
+            if (!peerId || !name) {
+                showToast('Enter a session ID and a name');
                 return;
             }
-            streams.forEach(stream => {
-                const item = document.createElement('div');
-                item.style.cssText = "background:#1a1a1a; border:1px solid #333; padding:8px; display:flex; justify-content:space-between; align-items:center;";
-                item.innerHTML = `
-                    <div style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:270px;">
-                      <strong style="color:#00ffcc;">${stream.name}</strong><br>
-                      <small style="color:#888;">${stream.url}</small>
-                    </div>
-                    <div style="display:flex; gap:5px;">
-                      <button onclick="editStream(${stream.id}, '${stream.name}', '${stream.url}')" style="background:#333; color:#fff; border:none; padding:4px 8px; cursor:pointer;">Edit</button>
-                      <button onclick="deleteStream(${stream.id})" style="background:#522; color:#fff; border:none; padding:4px 8px; cursor:pointer;">Del</button>
+            if (peerId.length > 200 || name.length > 80) {
+                showToast('Session ID or name is too long');
+                return;
+            }
+
+            localContactNames[peerId] = name;
+            try {
+                localStorage.setItem(LOCAL_CONTACTS_KEY, JSON.stringify(localContactNames));
+            } catch (e) {
+                delete localContactNames[peerId];
+                showToast('Could not save this name in local browser storage');
+                return;
+            }
+            renderDirectMessages();
+            updateLocalNameControls();
+            showToast('Name saved on this device only');
+        }
+
+        function removeLocalContactName() {
+            const peerId = document.getElementById('contact-peer-id').value.trim();
+            if (!peerId || !localContactNames[peerId]) return;
+            delete localContactNames[peerId];
+            try {
+                localStorage.setItem(LOCAL_CONTACTS_KEY, JSON.stringify(localContactNames));
+            } catch (e) {
+                showToast('Could not update local browser storage');
+                return;
+            }
+            document.getElementById('contact-name').value = '';
+            renderDirectMessages();
+            updateLocalNameControls();
+            showToast('Local name removed');
+        }
+
+        function updateLocalNameControls() {
+            const peerId = document.getElementById('contact-peer-id').value.trim();
+            const savedName = localContactNames[peerId];
+            const nameInput = document.getElementById('contact-name');
+            const removeButton = document.getElementById('remove-local-name-btn');
+            if (document.activeElement !== nameInput) nameInput.value = savedName || '';
+            removeButton.disabled = !savedName;
+        }
+
+        function editLocalContactName(peerId) {
+            document.getElementById('contact-peer-id').value = peerId;
+            document.getElementById('contact-name').value = localContactNames[peerId] || '';
+            updateLocalNameControls();
+            document.getElementById('contact-name').focus();
+        }
+
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, char => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            })[char]);
+        }
+
+        function updateBroadcastByteCount() {
+            const input = document.getElementById('broadcast-input');
+            const counter = document.getElementById('broadcast-byte-count');
+            const sendButton = document.getElementById('send-broadcast-btn');
+            if (!input || !counter || !sendButton) return;
+            const byteLength = new TextEncoder().encode(input.value).length;
+            counter.innerText = `${byteLength} / ${MAX_BROADCAST_BYTES} bytes`;
+            counter.classList.toggle('text-red-400', byteLength > MAX_BROADCAST_BYTES);
+            sendButton.disabled = byteLength > MAX_BROADCAST_BYTES;
+        }
+
+        function updateDirectMessageByteCount() {
+            const input = document.getElementById('dm-input');
+            const counter = document.getElementById('dm-byte-count');
+            const sendButton = document.getElementById('send-dm-btn');
+            if (!input || !counter || !sendButton) return;
+            const byteLength = new TextEncoder().encode(input.value).length;
+            counter.innerText = `${byteLength} / ${MAX_DIRECT_MESSAGE_BYTES} bytes`;
+            counter.classList.toggle('text-red-400', byteLength > MAX_DIRECT_MESSAGE_BYTES);
+            sendButton.disabled = byteLength > MAX_DIRECT_MESSAGE_BYTES;
+        }
+
+        function setSidebarCollapsed(collapsed, persist = true) {
+            sidebarCollapsed = collapsed;
+            const shell = document.getElementById('app-shell');
+            const button = document.getElementById('sidebar-collapse-btn');
+            const icon = document.getElementById('sidebar-collapse-icon');
+            if (!shell || !button || !icon) return;
+            shell.classList.toggle('sidebar-collapsed', collapsed);
+            button.setAttribute('aria-expanded', String(!collapsed));
+            button.setAttribute('aria-label', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
+            button.title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+            icon.innerText = collapsed ? '›' : '‹';
+            if (persist) {
+                try {
+                    localStorage.setItem('mesh_sidebar_collapsed', String(collapsed));
+                } catch (e) {
+                    console.warn('Could not save sidebar preference:', e);
+                }
+            }
+        }
+
+        function updateActivityLights() {
+            const shell = document.getElementById('app-shell');
+            const peerCount = livePeerIds.size;
+            const queuedCount = directMessages.filter(message => message.status === 'waiting').length;
+            const peerCountLabel = document.getElementById('peer-activity-count');
+            const outboxCountLabel = document.getElementById('outbox-activity-count');
+            if (peerCountLabel) peerCountLabel.innerText = peerCount;
+            if (outboxCountLabel) outboxCountLabel.innerText = queuedCount;
+            if (shell) {
+                shell.classList.toggle('peer-online', peerCount > 0);
+                shell.classList.toggle('outbox-active', queuedCount > 0);
+            }
+        }
+        function showToast(msg) {
+            let toast = document.getElementById("ui-toast");
+            if (!toast) {
+                toast = document.createElement("div");
+                toast.id = "ui-toast";
+                toast.className = "fixed top-5 right-5 bg-emerald-600 text-white font-mono text-xs px-4 py-2 rounded shadow-lg z-50 transition-opacity duration-300 opacity-0";
+                document.body.appendChild(toast);
+            }
+            toast.innerText = msg;
+            toast.classList.remove("opacity-0");
+            toast.classList.add("opacity-100");
+            setTimeout(() => {
+                toast.classList.remove("opacity-100");
+                toast.classList.add("opacity-0");
+            }, 2500);
+        }
+
+        function setPresetFeed(url, region) {
+            document.getElementById('rss-url-input').value = url;
+            document.getElementById('rss-target-region').value = region;
+            showToast(`Preset loaded: ${url}`);
+        }
+
+        function toggleSaveCard(id) {
+            const stringId = String(id);
+            const idx = savedCardIds.indexOf(stringId);
+            if (idx > -1) {
+                savedCardIds.splice(idx, 1);
+                showToast("Card removed from saved bookmarks");
+            } else {
+                savedCardIds.push(stringId);
+                showToast("Card saved to bookmarks!");
+            }
+            localStorage.setItem('mesh_saved_cards', JSON.stringify(savedCardIds));
+            updateSavedCount();
+            renderBroadcasts();
+        }
+
+        function updateSavedCount() {
+            const badge = document.getElementById('saved-count');
+            if (badge) badge.innerText = savedCardIds.length;
+            const sidebarBadge = document.getElementById('sidebar-saved-count');
+            if (sidebarBadge) sidebarBadge.innerText = savedCardIds.length;
+        }
+
+        function clearAllSaved() {
+            if (confirm('Clear all saved bookmarks from app storage?')) {
+                savedCardIds = [];
+                localStorage.removeItem('mesh_saved_cards');
+                updateSavedCount();
+                renderBroadcasts();
+                showToast("Cleared all bookmarked cards");
+            }
+        }
+
+        function switchView() {
+            document.querySelector('.nav-tab-btn[data-tab="tab-saved"]')?.click();
+        }
+
+        function ingestMagnet(magnet) {
+            const textArea = document.createElement("textarea");
+            textArea.value = magnet;
+            textArea.style.position = "fixed";
+            textArea.style.left = "-999999px";
+            document.body.appendChild(textArea);
+            textArea.select();
+            try {
+                document.execCommand("copy");
+                showToast("Magnet URI copied to clipboard!");
+            } catch (err) {
+                prompt("Copy Magnet URI manually:", magnet);
+            }
+            document.body.removeChild(textArea);
+        }
+
+        function toggleTag(btn) {
+            btn.classList.toggle('bg-amber-600');
+            btn.classList.toggle('text-white');
+            btn.classList.toggle('bg-slate-800');
+            btn.classList.toggle('text-slate-400');
+        }
+
+        function addCustomTagPrompt() {
+            const tagName = prompt('Enter custom tag name (e.g. hardware, crypto):');
+            if (tagName && tagName.trim()) {
+                const clean = tagName.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '');
+                const container = document.getElementById('tag-pills-container');
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'tag-pill px-2 py-1 bg-amber-600 text-white text-[11px] font-mono rounded cursor-pointer transition';
+                btn.setAttribute('data-tag', clean);
+                btn.innerText = `#${clean}`;
+                btn.onclick = function() { toggleTag(this); };
+                container.insertBefore(btn, container.lastElementChild);
+            }
+        }
+
+        function setActiveModel(modelName) {
+            selectedModel = modelName;
+            const sel1 = document.getElementById('ai-model-select');
+            const sel2 = document.getElementById('sandbox-model-select');
+            if (sel1) sel1.value = modelName;
+            if (sel2) sel2.value = modelName;
+            renderModelCards();
+            showToast(`Active model: ${modelName}`);
+        }
+
+        function renderModelCards() {
+            const list = document.getElementById('ai-models-list');
+            if (!list || !availableModels.length) return;
+
+            list.innerHTML = availableModels.map(m => {
+                const isSelected = m.name === selectedModel;
+                const borderClass = isSelected ? 'border-emerald-500 bg-emerald-950/40' : 'border-slate-800 bg-slate-950 hover:border-slate-700';
+                const badge = isSelected ? '<span class="text-[10px] text-emerald-400 font-bold uppercase tracking-wider bg-emerald-950 border border-emerald-800 px-1.5 py-0.5 rounded">Active</span>' : '';
+                return `
+                    <div onclick="setActiveModel('${m.name}')" class="p-2.5 ${borderClass} border rounded-lg cursor-pointer transition-all flex justify-between items-center select-none hover:shadow-md">
+                        <div>
+                            <div class="text-amber-400 font-bold text-xs">${m.name}</div>
+                            <div class="text-[10px] text-slate-500">${m.details && m.details.parameter_size ? m.details.parameter_size : 'Ollama Model'}</div>
+                        </div>
+                        ${badge}
                     </div>
                 `;
-                listContainer.appendChild(item);
-            });
-        } catch (err) {
-            console.error("Failed to load custom streams:", err);
+            }).join('');
         }
-    }
 
-    if (form) {
-        form.onsubmit = async (e) => {
-            e.preventDefault();
-            const { invoke } = window.__TAURI__.core;
-            const name = document.getElementById('stream-title').value;
-            const url = document.getElementById('stream-url').value;
+        function onSummarizeClick(btn) {
+            const id = btn.getAttribute('data-id');
+            const item = allBroadcasts.find(b => String(b.id) === String(id));
+            if (item) {
+                summarizeBroadcast(id, item.content || '');
+            } else {
+                summarizeBroadcast(id, 'Broadcast item ' + id);
+            }
+        }
+
+        async function summarizeBroadcast(id, content) {
+            const btn = document.getElementById(`ai-btn-${id}`);
+            const summaryBox = document.getElementById(`ai-summary-${id}`);
+
+            if (btn) btn.innerText = "⚡ Summarizing...";
+
             try {
-                await invoke('add_user_feed', { name, url });
-                form.reset();
-                document.getElementById('stream-id').value = '';
-                cancelBtn.style.display = 'none';
-                loadStreams();
+                const res = await fetch('/api/ai/summarize', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id, content, model: selectedModel })
+                });
+                const data = await res.json();
+                if (data.status === 'ok' && summaryBox) {
+                    summaryBox.classList.remove('hidden');
+                    summaryBox.innerText = `🤖 ${data.summary}`;
+                    if (btn) btn.innerText = "⚡ Refreshed Summary";
+                } else if (summaryBox) {
+                    summaryBox.classList.remove('hidden');
+                    summaryBox.innerText = `⚠️ AI Offline or Timed Out`;
+                    if (btn) btn.innerText = "⚡ Summarize";
+                }
+            } catch (e) {
+                if (summaryBox) {
+                    summaryBox.classList.remove('hidden');
+                    summaryBox.innerText = `⚠️ Failed to query local LLM`;
+                }
+                if (btn) btn.innerText = "⚡ Summarize";
+            }
+        }
+
+        async function fetchAiModels() {
+            try {
+                const res = await fetch('/api/ai/models');
+                const data = await res.json();
+                if (data.models && Array.isArray(data.models)) {
+                    availableModels = data.models;
+                    
+                    const optionsHtml = availableModels.map(m => `<option value="${m.name}">${m.name}</option>`).join('');
+                    const sel1 = document.getElementById('ai-model-select');
+                    const sel2 = document.getElementById('sandbox-model-select');
+                    if (sel1) sel1.innerHTML = optionsHtml;
+                    if (sel2) sel2.innerHTML = optionsHtml;
+
+                    const preferredModels = ['gemma3:4b', 'llama3.2:1b'];
+                    selectedModel = preferredModels.find(name => availableModels.some(model => model.name === name))
+                        || availableModels[0]?.name
+                        || 'llama3.2:1b';
+
+                    if (sel1) sel1.value = selectedModel;
+                    if (sel2) sel2.value = selectedModel;
+
+                    renderModelCards();
+                }
+            } catch (e) {
+                console.warn('Could not fetch Ollama models:', e);
+            }
+        }
+
+        async function fetchTelemetry() {
+            try {
+                const res = await fetch('/api/telemetry');
+                const data = await res.json();
+                document.getElementById('telemetry-cpu').innerText = `${data.cpu_usage_pct}%`;
+                document.getElementById('bar-cpu').style.width = `${data.cpu_usage_pct}%`;
+
+                document.getElementById('telemetry-ram').innerText = `${data.ram_used_mb} / ${data.ram_total_mb} MB`;
+                document.getElementById('bar-ram').style.width = `${(data.ram_used_mb / data.ram_total_mb) * 100}%`;
+
+                document.getElementById('telemetry-vram').innerText = `${data.vram_used_mb} / ${data.vram_total_mb} MB`;
+                document.getElementById('bar-vram').style.width = `${(data.vram_used_mb / data.vram_total_mb) * 100}%`;
+                if (data.gpu_name) document.getElementById('telemetry-gpu-label').innerText = `${data.gpu_name} VRAM`;
+            } catch (e) {
+                console.warn('Telemetry offline:', e);
+            }
+        }
+
+        let directMessages = [];
+
+        async function loadIdentity() {
+            try {
+                const res = await fetch('/api/identity');
+                if (!res.ok) throw new Error('Identity endpoint unavailable');
+                const data = await res.json();
+                localPeerId = data.peer_id || '';
+                document.getElementById('local-peer-id').innerText = localPeerId || 'Unavailable';
+            } catch (e) {
+                document.getElementById('local-peer-id').innerText = 'Unavailable';
+                console.warn('Could not load local session ID:', e);
+            }
+        }
+
+        async function fetchPeers() {
+            try {
+                const res = await fetch('/api/peers');
+                if (!res.ok) throw new Error(`Peer request failed (${res.status})`);
+                const peers = await res.json();
+                livePeerIds = new Set(peers.map(peer => peer.did));
+            } catch (e) {
+                livePeerIds = new Set();
+                console.warn('Could not load live peers:', e);
+            }
+            updateActivityLights();
+            renderBroadcasts();
+        }
+
+        function replyToBroadcast(peerId, broadcastId) {
+            document.getElementById('dm-recipient-input').value = peerId;
+            document.getElementById('dm-reply-to-input').value = broadcastId;
+            document.querySelector('.nav-tab-btn[data-tab="tab-dm"]').click();
+            document.getElementById('dm-input').focus();
+        }
+
+        async function loadDirectMessages() {
+            try {
+                const res = await fetch('/api/dm');
+                if (!res.ok) throw new Error(`Inbox request failed (${res.status})`);
+                const data = await res.json();
+                directMessages = Array.isArray(data) ? data : (data.messages || []);
+                updateActivityLights();
+                renderDirectMessages();
+            } catch (e) {
+                console.warn('Could not load direct messages:', e);
+            }
+        }
+
+        async function sendDirectMessage() {
+            const recipientId = document.getElementById('dm-recipient-input').value.trim();
+            const content = document.getElementById('dm-input').value.trim();
+            const replyToBroadcast = document.getElementById('dm-reply-to-input').value.trim();
+            const queueTtlSeconds = Number(document.getElementById('dm-queue-ttl').value);
+            const status = document.getElementById('dm-send-status');
+
+            if (!recipientId || !content) {
+                status.innerText = 'Enter a recipient session ID and message.';
+                return;
+            }
+            if (new TextEncoder().encode(content).length > MAX_DIRECT_MESSAGE_BYTES) {
+                status.innerText = 'Direct replies are limited to 3000 bytes. Use torrent sharing for larger media.';
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/dm', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ recipient_id: recipientId, content, reply_to_broadcast: replyToBroadcast || null, queue_ttl_seconds: queueTtlSeconds })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || `Send failed (${res.status})`);
+                document.getElementById('dm-input').value = '';
+                updateDirectMessageByteCount();
+                document.getElementById('dm-reply-to-input').value = '';
+                status.innerText = data.status === 'waiting'
+                    ? `Waiting for recipient until ${new Date(data.expires_at * 1000).toLocaleString()}.`
+                    : 'Sent. Waiting for the peer to acknowledge receipt.';
+                await loadDirectMessages();
+            } catch (e) {
+                status.innerText = e.message || 'Could not send this reply.';
+                showToast('Direct reply was not sent');
+            }
+        }
+
+        function renderDirectMessages() {
+            const container = document.getElementById('dm-inbox-container');
+            const badge = document.getElementById('dm-unread-count');
+            if (!container) return;
+
+            if (badge) badge.innerText = directMessages.length;
+
+            if (directMessages.length === 0) {
+                container.innerHTML = `<div class="p-4 text-center text-slate-500 font-mono text-sm">No direct replies yet.</div>`;
+                return;
+            }
+
+            container.innerHTML = directMessages.map(dm => {
+                const outgoing = dm.sender_id === localPeerId;
+                const peerId = outgoing ? dm.recipient_id : dm.sender_id;
+                const direction = outgoing ? 'To' : 'From';
+                const localName = localContactNames[peerId];
+                const timestamp = dm.timestamp ? new Date(dm.timestamp * 1000).toLocaleString() : '';
+                return `
+                    <div class="p-4 bg-slate-900 border border-slate-800 rounded space-y-2">
+                        <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
+                            <div>
+                                <span class="text-slate-300">${direction} <span class="text-emerald-300">${escapeHtml(localName || peerId)}</span></span>
+                                ${localName ? `<div class="mt-1 text-[10px] text-slate-500">Session ID: ${escapeHtml(peerId)}</div>` : ''}
+                            </div>
+                            <span class="text-slate-500">${escapeHtml(timestamp)} · ${escapeHtml(dm.status)}</span>
+                        </div>
+                        <button type="button" class="local-name-edit text-[10px] font-mono text-blue-300 hover:text-blue-200 cursor-pointer" data-peer-id="${escapeHtml(peerId)}">${localName ? 'Edit local name' : 'Add local name'}</button>
+                        ${dm.expires_at ? `<div class="text-[10px] font-mono text-slate-500">Expires ${escapeHtml(new Date(dm.expires_at * 1000).toLocaleString())}</div>` : ''}
+                        ${dm.reply_to_broadcast ? `<div class="text-[10px] font-mono text-slate-500">Reply to broadcast ${escapeHtml(dm.reply_to_broadcast)}</div>` : ''}
+                        <p class="text-sm text-slate-200 whitespace-pre-wrap break-words">${escapeHtml(dm.content)}</p>
+                    </div>
+                `;
+            }).join('');
+        }
+
+
+        async function fetchBroadcasts() {
+            try {
+                const res = await fetch('/api/broadcasts');
+                const data = await res.json();
+                allBroadcasts = Array.isArray(data) ? data : (data.broadcasts || []);
+                renderBroadcasts();
             } catch (err) {
-                alert("Error saving stream: " + err);
+                console.error('Failed to load broadcasts:', err);
             }
-        };
-    }
-
-    window.deleteStream = async function(id) {
-        if (confirm("Remove this custom stream?")) {
-            const { invoke } = window.__TAURI__.core;
-            await invoke('remove_user_feed', { id });
-            loadStreams();
-        }
-    };
-
-    window.editStream = function(id, name, url) {
-        document.getElementById('stream-id').value = id;
-        document.getElementById('stream-title').value = name;
-        document.getElementById('stream-url').value = url;
-        cancelBtn.style.display = 'inline-block';
-    };
-
-    cancelBtn.onclick = () => {
-        form.reset();
-        document.getElementById('stream-id').value = '';
-        cancelBtn.style.display = 'none';
-    };
-
-    function setActiveTopicFilter(topicName) {
-      activeTopicFilter = topicName.toLowerCase();
-      document.getElementById('active-topic-label').innerText = '#' + activeTopicFilter.toUpperCase();
-      loadFeed();
-    }
-
-    function openSettingsModal() {
-      document.getElementById('settings-modal').style.display = 'flex';
-    }
-
-    function closeSettingsModal() {
-      document.getElementById('settings-modal').style.display = 'none';
-    }
-
-    function previewFontSize(size) {
-      currentFontSizePx = parseInt(size);
-      document.getElementById('font-size-val').innerText = size + 'px';
-      document.documentElement.style.fontSize = size + 'px';
-    }
-
-    function adjustFontSize(delta) {
-      currentFontSizePx = Math.max(10, Math.min(22, currentFontSizePx + delta));
-      document.documentElement.style.fontSize = `${currentFontSizePx}px`;
-      document.getElementById('settings-font-slider').value = currentFontSizePx;
-      document.getElementById('font-size-val').innerText = currentFontSizePx + 'px';
-    }
-
-    function resetFontSize() {
-      currentFontSizePx = 14;
-      document.documentElement.style.fontSize = '14px';
-      document.getElementById('settings-font-slider').value = 14;
-      document.getElementById('font-size-val').innerText = '14px';
-    }
-
-    async function saveAndApplySettings() {
-      const fontSize = parseInt(document.getElementById('settings-font-slider').value) || 14;
-      const accentColor = document.getElementById('settings-accent-select').value;
-      const theme = document.getElementById('settings-theme-select').value;
-      const capacity = parseInt(document.getElementById('capacity-selector').value) || 25;
-
-      try {
-        await invokeCmd('save_app_settings', { fontSize, theme, accentColor, cardCapacity: capacity });
-        applyThemeAndAccent(theme, accentColor);
-        closeSettingsModal();
-      } catch (err) {
-        console.error("Failed to save settings:", err);
-      }
-    }
-
-    function applyThemeAndAccent(theme, accentColor) {
-      document.documentElement.style.setProperty('--accent-color', accentColor);
-      if (theme === 'oled-black') {
-        document.body.style.background = '#000000';
-      } else if (theme === 'soft-slate') {
-        document.body.style.background = '#1e2229';
-      } else {
-        document.body.style.background = '#121212';
-      }
-    }
-
-    async function loadAppSettings() {
-      try {
-        const settings = await invokeCmd('get_app_settings');
-        if (settings) {
-          currentFontSizePx = settings.font_size;
-          document.getElementById('settings-font-slider').value = settings.font_size;
-          previewFontSize(settings.font_size);
-          document.getElementById('settings-accent-select').value = settings.accent_color;
-          document.getElementById('settings-theme-select').value = settings.theme;
-          applyThemeAndAccent(settings.theme, settings.accent_color);
-        }
-      } catch (e) {
-        console.error("Could not load settings:", e);
-      }
-    }
-
-    function openMuteModal() {
-      renderMutedPeersModalList();
-      document.getElementById('mute-modal').style.display = 'flex';
-    }
-
-    function closeMuteModal() {
-      document.getElementById('mute-modal').style.display = 'none';
-    }
-
-    function openRegionModal() {
-      document.getElementById('region-modal').style.display = 'flex';
-    }
-
-    function closeRegionModal() {
-      document.getElementById('region-modal').style.display = 'none';
-    }
-
-    function selectRegion(regionName) {
-      activeRegion = regionName.toLowerCase();
-      document.getElementById('active-region-label').innerText = activeRegion.toUpperCase();
-      closeRegionModal();
-      loadFeed();
-    }
-
-    function joinCustomRegion() {
-      const input = document.getElementById('custom-region-input').value.trim();
-      if (input) {
-        selectRegion(input);
-        document.getElementById('custom-region-input').value = '';
-      }
-    }
-
-    function switchView(tab) {
-      currentTab = tab;
-      document.getElementById('tab-live').classList.toggle('active', tab === 'live');
-      document.getElementById('tab-wiki').classList.toggle('active', tab === 'wiki-stream');
-      document.getElementById('tab-tech').classList.toggle('active', tab === 'tech-stream');
-      document.getElementById('tab-code').classList.toggle('active', tab === 'code-stream');
-      document.getElementById('tab-archive').classList.toggle('active', tab === 'archive-stream');
-      document.getElementById('tab-saved').classList.toggle('active', tab === 'saved');
-      loadFeed();
-    }
-
-    function updateCardCapacity() {
-      cardCapacity = parseInt(document.getElementById('capacity-selector').value) || 25;
-      loadFeed();
-    }
-
-    function updateRefreshSpeed() {
-      if (refreshIntervalTimer) clearInterval(refreshIntervalTimer);
-      const speedMs = parseInt(document.getElementById('speed-selector').value) || 0;
-      if (speedMs > 0) {
-        refreshIntervalTimer = setInterval(loadFeed, speedMs);
-      }
-    }
-
-    async function pollConnectedPeers() {
-      try {
-        const peers = await invokeCmd('get_connected_peers');
-        const countSpan = document.getElementById('peer-count');
-        const listDiv = document.getElementById('connected-peers-list');
-        
-        countSpan.innerText = peers.length;
-        if (!peers || peers.length === 0) {
-          listDiv.innerHTML = '<div style="font-size:0.75rem; color:#777;">No active peer connections.</div>';
-          return;
         }
 
-        listDiv.innerHTML = peers.map(([peerId, addr]) => `
-          <div class="peer-item" onclick="messageAuthor('${peerId}')" title="Click to DM" style="cursor:pointer;">
-            <div style="color:var(--accent-color); font-weight:bold;">${peerId.substring(0, 10)}...</div>
-            <div style="color:#888; font-size:0.65rem;">${addr}</div>
-          </div>
-        `).join('');
-      } catch (err) {
-        console.error("Failed to poll peers:", err);
-      }
-    }
+                        function renderBroadcasts() {
+            const container = document.getElementById('mesh-feed-container');
+            const rssContainer = document.getElementById('rss-feed-container');
+            const savedContainer = document.getElementById('saved-feed-container');
+            if (!container) return;
 
-    function openExternalUrl(url) {
-      if (!url) return;
-      let targetUrl = url;
-      if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
-        targetUrl = 'https://' + targetUrl;
-      }
-      
-      if (window.__TAURI__ && window.__TAURI__.shell) {
-        window.__TAURI__.shell.open(targetUrl);
-      } else {
-        window.open(targetUrl, '_blank');
-      }
-    }
+            const normActive = activeRegion.replace(/^#/, '').toLowerCase();
+            
+            // Separate Chat / Human / Node broadcasts from RSS feed items
+            const chatBroadcasts = allBroadcasts.filter(b => {
+                const isRss = (b.sender_type === 'rss' || (b.ai_tag && b.ai_tag.includes('NEWS')) || (b.content || '').includes('rss-bot'));
+                if (isRss) return false;
+                if (normActive === 'global' || normActive === '') return true;
+                const rNorm = (b.region || '').replace(/^#/, '').toLowerCase();
+                return rNorm === normActive;
+            });
 
-    function extractYouTubeId(url) {
-      const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
-      const match = url.match(regExp);
-      return (match && match[2].length === 11) ? match[2] : null;
-    }
+            const rssBroadcasts = allBroadcasts.filter(b => {
+                const isRss = (b.sender_type === 'rss' || (b.ai_tag && b.ai_tag.includes('NEWS')) || (b.content || '').includes('rss-bot'));
+                return isRss;
+            });
 
-    function toggleMuteAuthor(pubkey) {
-      if (mutedAuthors.has(pubkey)) {
-        mutedAuthors.delete(pubkey);
-      } else {
-        mutedAuthors.add(pubkey);
-      }
-      renderMutedPeersModalList();
-      loadFeed();
-    }
+            const savedFiltered = allBroadcasts.filter(b => savedCardIds.includes(String(b.id)));
 
-    function renderMutedPeersModalList() {
-      document.getElementById('mute-count').innerText = mutedAuthors.size;
-      const listContainer = document.getElementById('muted-peers-modal-list');
-      if (mutedAuthors.size === 0) {
-        listContainer.innerHTML = 'No muted peers.';
-        return;
-      }
+            const renderCardHtml = (b) => {
+                const hasMagnet = b.content && b.content.includes('magnet:?');
+                const magnetMatch = hasMagnet ? b.content.match(/magnet:\?[^\s\"]+/) : null;
+                const magnetUrl = magnetMatch ? magnetMatch[0] : null;
 
-      listContainer.innerHTML = Array.from(mutedAuthors).map(pubkey => `
-        <div class="muted-item">
-          <span class="pubkey-display">${pubkey}</span>
-          <button class="action-btn btn-unmute" onclick="toggleMuteAuthor('${pubkey}')">🔊 Unmute</button>
-        </div>
-      `).join('');
-    }
+                const urlMatch = (b.content || '').match(/(https?:\/\/[^\s]+)/);
+                let extractedUrl = urlMatch ? urlMatch[0].replace(/[.,;!?)>\x27\"]$/, '') : null;
+                
+                if (extractedUrl && extractedUrl.includes('at_medium=')) {
+                    extractedUrl = extractedUrl.split('?')[0];
+                }
 
-    async function saveCard(postId) {
-      try {
-        await invokeCmd('save_card_to_db', { postId: String(postId) });
-        alert("Card saved to local storage!");
-      } catch (err) {
-        console.error("Failed to save card:", err);
-      }
-    }
+                let displayLinkText = 'Open Link';
+                if (extractedUrl) {
+                    try {
+                        const parsed = new URL(extractedUrl);
+                        displayLinkText = parsed.hostname.replace('www.', '') + parsed.pathname;
+                        if (displayLinkText.length > 35) {
+                            displayLinkText = displayLinkText.substring(0, 32) + '...';
+                        }
+                    } catch(e) {
+                        displayLinkText = extractedUrl.replace(/^https?:\/\//, '');
+                    }
+                }
 
-    async function unsaveCard(postId) {
-      try {
-        await invokeCmd('unsave_card_in_db', { postId: String(postId) });
-        await loadFeed();
-      } catch (err) {
-        console.error("Failed to unsave card:", err);
-      }
-    }
+                let cleanContent = (b.content || '').replace(/<!\[CDATA\[([^\]]+)\]\]>/g, '$1');
+                if (extractedUrl) {
+                    cleanContent = cleanContent.replace(urlMatch[0], '').trim();
+                }
+                cleanContent = cleanContent.replace(/^[-–—\s]+/, '').trim();
+                if (!cleanContent || cleanContent === '📰') {
+                    cleanContent = 'Broadcast item #' + b.id;
+                }
 
-    function messageAuthor(pubkey) {
-      document.getElementById('dm-recipient-pubkey').value = pubkey;
-      document.getElementById('dm-body').focus();
-    }
+                const isSaved = savedCardIds.includes(String(b.id));
 
-    function renderMediaPreview(postId, mediaUrls) {
-      if (!mediaUrls || mediaUrls.length === 0) return '';
-      
-      const idx = mediaIndices[postId] || 0;
-      const currentUrl = mediaUrls[idx];
-      const ytId = extractYouTubeId(currentUrl);
+                return `
+                <div class="p-4 bg-slate-900 border border-slate-800 rounded-lg shadow-md space-y-2">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center space-x-2">
+                            <span class="px-2 py-0.5 text-xs font-mono font-semibold bg-blue-950 text-blue-300 rounded border border-blue-800/50">${b.region || '#global'}</span>
+                            ${b.ai_tag ? `<span class="px-2 py-0.5 text-[10px] font-mono font-semibold bg-amber-950 text-amber-300 rounded border border-amber-800/50">${b.ai_tag}</span>` : ''}
+                        </div>
+                        <span class="text-xs font-mono text-slate-400">${b.timestamp ? new Date(b.timestamp * 1000).toLocaleTimeString() : ''}</span>
+                    </div>
+                    <div class="text-xs font-mono text-slate-400">Sender: <span class="text-slate-300">${b.sender_did || 'unknown'}</span> (${b.sender_type || 'node'})</div>
+                    <p class="text-sm text-slate-200">${cleanContent}</p>
+                    
+                    <div id="ai-summary-${b.id}" class="hidden p-2 bg-slate-950 border border-slate-800 rounded text-xs font-mono text-amber-300/90"></div>
 
-      let mediaHtml = '';
-      if (ytId) {
-        const thumbUrl = `https://img.youtube.com/vi/${ytId}/hqdefault.jpg`;
-        const fullYtUrl = `https://www.youtube.com/watch?v=${ytId}`;
-        mediaHtml = `
-          <div class="yt-thumb-card" onclick="openExternalUrl('${fullYtUrl}')">
-            <img src="${thumbUrl}" alt="YouTube Preview" loading="lazy" />
-            <div class="yt-play-btn">▶ Watch Video (External Browser)</div>
-          </div>
-        `;
-      } else if (currentUrl.match(/\.(mp4|webm|ogg)$/i)) {
-        mediaHtml = `<video controls muted preload="none"><source src="${escapeHtml(currentUrl)}">Video preview unavailable.</video>`;
-      } else {
-        mediaHtml = `<img src="${escapeHtml(currentUrl)}" alt="Preview loading..." loading="lazy" />`;
-      }
-
-      let controlsHtml = '';
-      if (mediaUrls.length > 1) {
-        controlsHtml = `
-          <div class="carousel-controls">
-            <button class="carousel-btn" onclick="cycleMedia('${postId}', -1, ${mediaUrls.length})">◄ Prev</button>
-            <span style="font-size:0.85rem; color:#888;">${idx + 1} / ${mediaUrls.length}</span>
-            <button class="carousel-btn" onclick="cycleMedia('${postId}', 1, ${mediaUrls.length})">Next ►</button>
-          </div>
-        `;
-      }
-
-      return `
-        <div class="media-container" id="media-box-${postId}">
-          <div class="media-preview-box">${mediaHtml}</div>
-          ${controlsHtml}
-        </div>
-      `;
-    }
-
-    function cycleMedia(postId, dir, total) {
-      const current = mediaIndices[postId] || 0;
-      mediaIndices[postId] = (current + dir + total) % total;
-      loadFeed();
-    }
-
-    async function loadFeed() {
-      const feedContainer = document.getElementById('feed-container');
-      try {
-        let posts = [];
-        if (currentTab === 'saved') {
-          posts = await invokeCmd('fetch_saved_feed');
-        } else {
-          posts = await invokeCmd('fetch_feed', { limit: cardCapacity, activeRegion, feedMode: currentTab });
-        }
-        
-        let activePosts = (posts || []).filter(p => !mutedAuthors.has(p.author_pubkey));
-
-        if (activeTopicFilter !== 'all') {
-          activePosts = activePosts.filter(p => (p.topic || 'general').toLowerCase() === activeTopicFilter);
-        }
-
-        if (!activePosts || activePosts.length === 0) {
-          feedContainer.innerHTML = `<div class="card">No items found for topic #${activeTopicFilter} in [${currentTab.toUpperCase()}] stream.</div>`;
-          return;
-        }
-
-        feedContainer.innerHTML = activePosts.map(post => {
-          const rawScore = post.votes || 0;
-
-          if (userVoteStates[post.id] === undefined) {
-            userVoteStates[post.id] = 1;
-          }
-
-          const activeState = userVoteStates[post.id];
-          const topic = post.topic || 'general';
-          const region = post.region || 'global';
-          const author = post.author_pubkey || 'local';
-          const isMuted = mutedAuthors.has(author);
-
-          const upClass = activeState === 1 ? 'active-up' : '';
-          const zeroClass = activeState === 0 ? 'active-zero' : '';
-          const downClass = activeState === -1 ? 'active-down' : '';
-
-          const voteButtonsHtml = `
-            <div class="vote-controls">
-              <button class="vote-btn ${upClass}" onclick="setVoteChoice('${post.id}', 1)">+1</button>
-              <button class="vote-btn ${zeroClass}" onclick="setVoteChoice('${post.id}', 0)">0</button>
-              <button class="vote-btn ${downClass}" onclick="setVoteChoice('${post.id}', -1)">-1</button>
-              <div class="vote-score-label">TALLY</div>
-              <span class="vote-score" id="score-${post.id}">${rawScore}</span>
-            </div>
-          `;
-
-          const muteBtnHtml = isMuted
-            ? `<button class="action-btn btn-unmute" onclick="toggleMuteAuthor('${author}')">🔊 Unmute Peer</button>`
-            : `<button class="action-btn btn-mute" onclick="toggleMuteAuthor('${author}')">🔇 Mute Peer</button>`;
-
-          const saveUnsaveBtnHtml = currentTab === 'saved'
-            ? `<button class="action-btn btn-unsave" onclick="unsaveCard('${post.id}')">🗑️ Un-save Card</button>`
-            : `<button class="action-btn btn-save" onclick="saveCard('${post.id}')">⭐ Save Card</button>`;
-
-          const actionRowHtml = `
-            <div class="action-row">
-              ${saveUnsaveBtnHtml}
-              <button class="action-btn" onclick="messageAuthor('${author}')">✉ Direct Message</button>
-              ${muteBtnHtml}
-            </div>
-          `;
-
-          const rawUrl = post.target_url || '';
-          const displayUrl = rawUrl.startsWith('http://') || rawUrl.startsWith('https://') 
-            ? rawUrl 
-            : (rawUrl ? 'https://' + rawUrl : '');
-
-          let urlPreviewHtml = '';
-          if (displayUrl) {
-            urlPreviewHtml = `<a class="post-url-preview" onclick="openExternalUrl('${escapeHtml(displayUrl)}')">${escapeHtml(displayUrl)}</a>`;
-          }
-
-          let messageBodyHtml = '';
-          if (post.message_body && post.message_body.trim().length > 0) {
-            const isDM = post.message_body.startsWith('[🔒 PRIVATE DM');
-            const bodyClass = isDM ? 'dm-body' : 'burst-body';
-            messageBodyHtml = `<div class="${bodyClass}">${escapeHtml(post.message_body)}</div>`;
-          }
-
-          let mediaList = post.media_urls || [];
-          if (mediaList.length === 0 && displayUrl) {
-            if (extractYouTubeId(displayUrl) || displayUrl.match(/\.(jpeg|jpg|png|gif|webp|mp4|webm)$/i)) {
-              mediaList = [displayUrl];
-            }
-          }
-
-          const mediaPreview = renderMediaPreview(post.id, mediaList);
-
-          return `
-            <div class="card" id="card-${post.id}" style="margin-bottom: 15px;">
-              <div class="post-card">
-                ${voteButtonsHtml}
-                <div class="post-content">
-                  <div class="post-header">
-                    <span class="post-title" onclick="${displayUrl ? `openExternalUrl('${escapeHtml(displayUrl)}')` : ''}">${escapeHtml(post.title)}</span>
-                    <span class="topic-tag">#${topic}</span>
-                    <span class="region-tag">📍 ${region}</span>
-                  </div>
-                  ${urlPreviewHtml}
-                  ${messageBodyHtml}
-                  ${mediaPreview}
-                  <div style="margin-top: 6px;"><span class="pubkey-display">Author: ${escapeHtml(author)}</span></div>
-                  ${actionRowHtml}
+                    <div class="flex flex-wrap items-center gap-2 pt-2">
+                        <button id="ai-btn-${b.id}" data-id="${b.id}" onclick="onSummarizeClick(this)" class="px-3 py-1 bg-amber-600/20 hover:bg-amber-600/30 text-amber-400 border border-amber-800/50 font-mono text-xs rounded transition cursor-pointer">
+                            ⚡ Summarize
+                        </button>
+                        ${b.sender_did && b.sender_did !== localPeerId && livePeerIds.has(b.sender_did) ? `
+                            <button type="button" class="dm-reply-btn px-3 py-1 bg-emerald-700 hover:bg-emerald-600 text-white font-mono text-xs rounded cursor-pointer" data-peer-id="${escapeHtml(b.sender_did)}" data-broadcast-id="${escapeHtml(b.id)}">
+                                Reply privately
+                            </button>
+                        ` : ''}
+                        ${extractedUrl ? `
+                            <a href="${extractedUrl}" target="_blank" rel="noopener noreferrer" class="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white font-mono text-xs rounded transition flex items-center space-x-1">
+                                <span>🔗 ${displayLinkText}</span>
+                            </a>
+                        ` : ''}
+                        ${magnetUrl ? `
+                            <button onclick="ingestMagnet('${magnetUrl}')" class="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-xs rounded transition cursor-pointer">
+                                🧲 Copy Magnet URI
+                            </button>
+                        ` : ''}
+                        <button onclick="toggleSaveCard('${b.id}')" class="px-2.5 py-1 ${isSaved ? 'bg-purple-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'} font-mono text-xs rounded transition cursor-pointer">
+                            ${isSaved ? '🔖 Saved' : '📌 Save Card'}
+                        </button>
+                    </div>
                 </div>
-              </div>
-            </div>`;
-        }).join('');
-      } catch (err) {
-        console.error("Failed to load feed:", err);
-      }
-    }
+            `;
+            };
 
-    async function setVoteChoice(postId, newChoice) {
-      const currentChoice = userVoteStates[postId] !== undefined ? userVoteStates[postId] : 1;
-      if (currentChoice === newChoice) return;
+            if (chatBroadcasts.length === 0) {
+                container.innerHTML = `<div class="p-4 text-center text-slate-500 font-mono text-sm">No chat messages for ${activeRegion}. Send a message above!</div>`;
+            } else {
+                container.innerHTML = chatBroadcasts.map(renderCardHtml).join('');
+            }
 
-      const deltaToApply = newChoice - currentChoice;
-      userVoteStates[postId] = newChoice;
+            if (rssContainer) {
+                if (rssBroadcasts.length === 0) {
+                    rssContainer.innerHTML = `<div class="p-4 text-center text-slate-500 font-mono text-sm">No RSS web feeds ingested yet. Use RSS Ingestion Manager to add feeds.</div>`;
+                } else {
+                    rssContainer.innerHTML = rssBroadcasts.map(renderCardHtml).join('');
+                }
+            }
 
-      const uniqueSignatureProof = `sig_${postId}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+            if (savedContainer) {
+                if (savedFiltered.length === 0) {
+                    savedContainer.innerHTML = `<div class="p-4 text-center text-slate-500 font-mono text-sm">No bookmarked cards yet. Click 'Save Card' on any chat or feed item!</div>`;
+                } else {
+                    savedContainer.innerHTML = savedFiltered.map(renderCardHtml).join('');
+                }
+            }
+        }
 
-      try {
-        await invokeCmd('vote_from_ui', { 
-          postId: String(postId), 
-          delta: parseInt(deltaToApply),
-          signature: uniqueSignatureProof
+        document.addEventListener('DOMContentLoaded', () => {
+            updateSavedCount();
+            setSidebarCollapsed(sidebarCollapsed, false);
+
+            const sidebarCollapseBtn = document.getElementById('sidebar-collapse-btn');
+            if (sidebarCollapseBtn) {
+                sidebarCollapseBtn.addEventListener('click', () => setSidebarCollapsed(!sidebarCollapsed));
+            }
+
+            document.querySelectorAll('.nav-tab-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const targetId = btn.getAttribute('data-tab');
+                    document.querySelectorAll('.tab-content').forEach(tc => tc.classList.add('hidden'));
+                    document.querySelectorAll('.nav-tab-btn').forEach(tb => {
+                        tb.classList.remove('bg-blue-600/20', 'text-blue-400', 'font-medium');
+                        tb.classList.add('text-slate-400');
+                    });
+
+                    document.getElementById(targetId).classList.remove('hidden');
+                    btn.classList.add('bg-blue-600/20', 'text-blue-400', 'font-medium');
+                    btn.classList.remove('text-slate-400');
+                });
+            });
+
+            document.querySelectorAll('.region-filter-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    document.querySelectorAll('.region-filter-btn').forEach(b => { 
+                        b.classList.remove('bg-blue-600', 'text-white'); 
+                        b.classList.add('bg-slate-800', 'text-slate-300'); 
+                    });
+                    e.target.classList.remove('bg-slate-800', 'text-slate-300'); 
+                    e.target.classList.add('bg-blue-600', 'text-white');
+                    activeRegion = e.target.getAttribute('data-region');
+                    renderBroadcasts();
+                });
+            });
+
+            const refreshBtn = document.getElementById('refresh-btn');
+            if (refreshBtn) refreshBtn.addEventListener('click', fetchBroadcasts);
+
+            document.addEventListener('click', event => {
+                const replyButton = event.target.closest('.dm-reply-btn');
+                if (replyButton) replyToBroadcast(replyButton.dataset.peerId, replyButton.dataset.broadcastId);
+            });
+
+            const sendDmBtn = document.getElementById('send-dm-btn');
+            const dmInput = document.getElementById('dm-input');
+            if (sendDmBtn) sendDmBtn.addEventListener('click', sendDirectMessage);
+            if (dmInput) {
+                dmInput.addEventListener('input', updateDirectMessageByteCount);
+                updateDirectMessageByteCount();
+            }
+
+            document.getElementById('save-local-name-btn').addEventListener('click', saveLocalContactName);
+            document.getElementById('remove-local-name-btn').addEventListener('click', removeLocalContactName);
+            document.getElementById('contact-peer-id').addEventListener('change', updateLocalNameControls);
+            document.addEventListener('click', event => {
+                const editButton = event.target.closest('.local-name-edit');
+                if (editButton) editLocalContactName(editButton.dataset.peerId);
+            });
+
+            const sendBtn = document.getElementById('send-broadcast-btn');
+            if (sendBtn) {
+                    document.getElementById('broadcast-input').addEventListener('input', updateBroadcastByteCount);
+                    updateBroadcastByteCount();
+                    sendBtn.addEventListener('click', async () => {
+                    const input = document.getElementById('broadcast-input');
+                    const content = input ? input.value.trim() : '';
+                    const region = document.getElementById('broadcast-region').value;
+                    const sender_type = document.getElementById('broadcast-type').value;
+
+                    if (!content) return;
+
+                    try {
+                        const res = await fetch('/api/broadcasts', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ region, content, sender_type })
+                        });
+                        if (!res.ok) {
+                            const error = await res.text();
+                            showToast(error || `Broadcast failed (${res.status})`);
+                            return;
+                        }
+                        input.value = '';
+                        updateBroadcastByteCount();
+                        await loadDirectMessages();
+                        fetchBroadcasts();
+                    } catch (err) {
+                        console.error('Failed to transmit broadcast:', err);
+                    }
+                });
+            }
+
+            
+            const aiRunBtn = document.getElementById('ai-test-run-btn');
+            if (aiRunBtn) {
+aiRunBtn.addEventListener('click', async () => {
+                    const promptText = document.getElementById('ai-test-prompt').value;
+                    const out = document.getElementById('ai-test-output');
+                    if (!promptText) return;
+
+                    out.classList.remove('hidden');
+                    out.innerText = `Running inference with ${selectedModel}...`;
+
+                    try {
+                        const res = await fetch('/api/ai/summarize', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ id: "test", content: promptText, model: selectedModel })
+                        });
+                        const data = await res.json();
+                        out.innerText = data.summary || "No response";
+                    } catch (e) {
+                        out.innerText = "Error running local model.";
+                    }
+                });
+            }
+
+            const peersModal = document.getElementById('peers-modal');
+            const openPeersBtn = document.getElementById('open-peers-btn');
+            if (openPeersBtn && peersModal) {
+openPeersBtn.addEventListener('click', async () => {
+                    peersModal.classList.remove('hidden');
+                    try {
+                        const res = await fetch('/api/peers');
+                        const peers = await res.json();
+                        document.getElementById('peers-list').innerHTML = peers.map(p => `
+                            <div class="flex justify-between items-center p-2 bg-slate-950 border border-slate-800 rounded">
+                                <div>
+                                    <div class="text-slate-200 font-semibold">${p.did}</div>
+                                    <div class="text-slate-500 text-[10px]">${p.region}</div>
+                                </div>
+                                <div class="text-right">
+                                    <span class="text-emerald-400 font-bold">${p.status}</span>
+                                    <div class="text-slate-500 text-[10px]">${p.latency_ms} ms</div>
+                                </div>
+                            </div>
+                        `).join('');
+                    } catch (e) {
+                        document.getElementById('peers-list').innerHTML = '<div class="text-red-400">Failed to query peers</div>';
+                    }
+                });
+            }
+
+            const closePeersBtn = document.getElementById('close-peers-btn');
+            if (closePeersBtn && peersModal) {
+                closePeersBtn.addEventListener('click', () => {
+                    peersModal.classList.add('hidden');
+                });
+            }
+
+            fetchAiModels();
+            Promise.all([loadIdentity(), fetchPeers()]).then(() => {
+                fetchBroadcasts();
+                loadDirectMessages();
+            });
+            fetchTelemetry();
+            setInterval(fetchTelemetry, 3000);
+            setInterval(() => {
+                fetchPeers();
+                loadDirectMessages();
+            }, 5000);
         });
-        await loadFeed();
-      } catch (err) {
-        console.error("Backend vote update failed:", err);
-      }
-    }
-
-    async function sendTextBurst() {
-      const topic = document.getElementById('text-burst-topic').value.trim() || 'general';
-      const customRegion = document.getElementById('text-burst-region').value.trim();
-      const region = customRegion || activeRegion;
-      const messageBody = document.getElementById('text-burst-body').value.trim();
-      if (!messageBody) return;
-
-      try {
-        const newId = await invokeCmd('send_text_burst_from_ui', { topic, region, messageBody });
-        if (newId) userVoteStates[newId] = 1;
-        document.getElementById('text-burst-body').value = '';
-        await loadFeed();
-      } catch (err) {
-        console.error("Burst failed:", err);
-      }
-    }
-
-    async function sendDirectMessage() {
-      const recipient = document.getElementById('dm-recipient-pubkey').value.trim();
-      const dmText = document.getElementById('dm-body').value.trim();
-      if (!recipient || !dmText) {
-        alert("Please specify a recipient public key and direct message body.");
-        return;
-      }
-
-      const formattedBody = `[🔒 PRIVATE DM to ${recipient}]: ${dmText}`;
-
-      try {
-        const newId = await invokeCmd('send_text_burst_from_ui', { topic: 'direct-messages', region: activeRegion, messageBody: formattedBody });
-        if (newId) userVoteStates[newId] = 1;
-        document.getElementById('dm-body').value = '';
-        await loadFeed();
-      } catch (err) {
-        console.error("DM failed:", err);
-      }
-    }
-
-    async function submitPost() {
-      const title = document.getElementById('post-title').value.trim();
-      const targetUrl = document.getElementById('post-url').value.trim();
-      const topic = document.getElementById('post-topic').value.trim() || 'general';
-      const customRegion = document.getElementById('post-region').value.trim();
-      const region = customRegion || activeRegion;
-      const mediaRaw = document.getElementById('post-media').value.trim();
-      
-      const mediaUrls = mediaRaw ? mediaRaw.split(',').map(s => s.trim()).filter(s => s.length > 0) : [];
-
-      if (!title || !targetUrl) return;
-
-      try {
-        const newId = await invokeCmd('create_post_from_ui', { title, targetUrl, topic, region, mediaUrls });
-        if (newId) userVoteStates[newId] = 1;
-        document.getElementById('post-title').value = '';
-        document.getElementById('post-url').value = '';
-        document.getElementById('post-media').value = '';
-        await loadFeed();
-      } catch (err) {
-        console.error("Post failed:", err);
-      }
-    }
-
-    function escapeHtml(str) {
-      if (!str) return '';
-      return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-    }
-
-    window.addEventListener('DOMContentLoaded', () => {
-      loadAppSettings();
-      renderMutedPeersModalList();
-      updateRefreshSpeed();
-      pollConnectedPeers();
-      peerPollTimer = setInterval(pollConnectedPeers, 3000);
-      loadFeed();
-    });
-    <!-- Custom Streams / Feeds Trigger Button -->
-    <div style="margin: 10px 0;">
-      <button id="open-stream-manager-btn" style="width: 100%; background: #1a1a1a; border: 1px solid #00ffcc; color: #00ffcc; padding: 6px; font-weight: bold; cursor: pointer; font-family: monospace;">+ Custom Feeds / Streams</button>
-    </div>
-
-    <!-- Custom Streams Manager Modal -->
-    <div id="stream-manager-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:9999; justify-content:center; align-items:center;">
-      <div style="background:#111; border:1px solid #00ffcc; padding:20px; width:450px; max-height:85vh; overflow-y:auto; color:#fff; font-family:monospace;">
-        <h3 style="color:#00ffcc; margin-top:0;">Custom Stream Manager</h3>
-    
-        <form id="stream-form" style="display:flex; flex-direction:column; gap:10px; margin-bottom:15px;">
-          <input type="hidden" id="stream-id">
-          <input type="text" id="stream-title" placeholder="Stream Title / Name" required style="background:#222; border:1px solid #444; color:#fff; padding:8px;">
-          <input type="url" id="stream-url" placeholder="https://example.com/stream" required style="background:#222; border:1px solid #444; color:#fff; padding:8px;">
-          <div style="display:flex; gap:10px;">
-            <button type="submit" style="background:#00ffcc; color:#000; border:none; padding:8px 14px; font-weight:bold; cursor:pointer;">Save Stream</button>
-            <button type="button" id="stream-cancel-btn" style="background:#444; color:#fff; border:none; padding:8px 14px; display:none; cursor:pointer;">Cancel</button>
-          </div>
-        </form>
-
-        <hr style="border-color:#333;">
-
-        <h4 style="color:#aaa; margin-bottom:8px;">Saved Streams List</h4>
-        <div id="streams-list-container" style="max-height:220px; overflow-y:auto; display:flex; flex-direction:column; gap:8px;"></div>
-
-        <button id="stream-close-modal-btn" style="margin-top:15px; background:#333; color:#fff; border:none; padding:8px; width:100%; cursor:pointer; font-weight:bold;">Close Window</button>
-      </div>
-    </div>
-  </script>
+    </script>
 </body>
 </html>
+

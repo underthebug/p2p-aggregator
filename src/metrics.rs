@@ -1,3 +1,4 @@
+
 use std::net::SocketAddr;
 use hyper::{Body, Request, Response, Server};
 use hyper::service::{make_service_fn, service_fn};
@@ -7,8 +8,8 @@ async fn handle_request(_req: Request<Body>) -> Result<Response<Body>, hyper::Er
     Ok(Response::new(Body::from(body)))
 }
 
-pub fn start_metrics_server() -> Result<(SocketAddr, ()), Box<dyn std::error::Error>> {
-    let addr: SocketAddr = "127.0.0.1:9090".parse()?;
+pub fn start_metrics_server(bind_addr: &str) -> Result<(SocketAddr, ()), Box<dyn std::error::Error>> {
+    let addr: SocketAddr = bind_addr.parse()?;
     let new_service = make_service_fn(move |_| async {
         Ok::<_, hyper::Error>(service_fn(handle_request))
     });
@@ -16,7 +17,7 @@ pub fn start_metrics_server() -> Result<(SocketAddr, ()), Box<dyn std::error::Er
     let server = Server::bind(&addr).serve(new_service);
     tokio::spawn(async move {
         if let Err(e) = server.await {
-            eprintln!("server error: {}", e);
+            eprintln!("Metrics server background error: {}", e);
         }
     });
 

@@ -1,0 +1,20 @@
+[Unit]
+Description=P2P Aggregator Daemon - Node 3
+After=network.target
+
+[Service]
+Type=simple
+User=russ2112
+WorkingDirectory=/home/russ2112/p2p-aggregator
+ExecStart=/home/russ2112/p2p-aggregator/target/release/p2p-aggregator --config node3_config.toml
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=false
+ReadWritePaths=/home/russ2112/p2p-aggregator /var/lib/p2p-aggregator
+
+[Install]
+WantedBy=multi-user.target

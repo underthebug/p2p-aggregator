@@ -102,7 +102,7 @@ impl ConsensusEngine {
     pub async fn handle_append_entries(
         &mut self,
         term: u64,
-        leader_id: String,
+        _leader_id: String,
         entries: Vec<LogEntry>,
         leader_commit: u64,
     ) -> RaftMessage {

@@ -2,27 +2,31 @@
 name = "p2p-aggregator"
 version = "0.1.0"
 edition = "2021"
+default-run = "p2p-aggregator"
 
 [dependencies]
+libp2p = { version = "0.53", features = [
+    "tokio",
+    "tcp",
+    "noise",
+    "yamux",
+    "gossipsub",
+    "macros",
+    "dns",
+    "mdns",
+    "ecdsa"
+] }
 tokio = { version = "1.0", features = ["full"] }
-rusqlite = { version = "0.31", features = ["bundled"] }
-rocksdb = "0.23"
-libp2p = { version = "0.53", features = ["full"] }
+rusqlite = "0.31"
+ed25519-dalek = { version = "2.2", features = ["rand_core", "hazmat"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-prometheus = "0.13"
-log = "0.4"
-env_logger = "0.11"
-axum = "0.7"
-sha2 = "0.10"
-ed25519-dalek = { version = "2.1", features = ["rand_core"] }
-anyhow = "1.0"
+uuid = { version = "1.6", features = ["v4"] }
 hex = "0.4"
-futures = "0.3"
-hyper = { version = "0.14", features = ["full"] }
-toml = "1.1.8"
-clap = { version = "4.6.7", features = ["derive"] }
-rand = { version = "0.8", features = ["std", "std_rng"] }
-rand_core = "0.10.1"
-getrandom = { version = "0.4.3", features = ["std"] }
-bincode = "1.3.3"
+crossterm = "0.27"
+ratatui = "0.26"
+rand = "0.8"
+clap = { version = "4.4", features = ["derive"] }
+bincode = "1.3"
+toml = "0.8"
+librqbit = "9.0.1"

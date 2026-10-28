@@ -1,0 +1,906 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mesh Station - Sovereign Hub</title>
+    <script src="https://cdn.tailwindcss.com">
+    const rssIngestBtn = document.getElementById('rss-ingest-btn');
+    if (rssIngestBtn) {
+        rssIngestBtn.addEventListener('click', async () => {
+            let raw_url = document.getElementById('rss-url-input').value.trim();
+            const feed_url = raw_url.split(']')[0].split(' ')[0];
+            document.getElementById('rss-url-input').value = feed_url;
+
+            const region = document.getElementById('rss-target-region').value;
+            const activeTags = Array.from(document.querySelectorAll('.tag-pill'))
+                .filter(b => b.classList.contains('bg-amber-600'))
+.map(b => b.getAttribute('data-tag'));
+
+            rssIngestBtn.innerText = "Fetching...";
+
+            try {
+                const res = await fetch('/api/rss/ingest', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ feed_url, region, tags: activeTags })
+                });
+                const data = await res.json();
+                if (data.status === 'ok') {
+                    showToast(`Ingested ${data.count} items into ${region}`);
+                    await loadDirectMessages();
+                    fetchBroadcasts();
+                } else {
+                    showToast("Failed to fetch RSS feed");
+                }
+            } catch (err) {
+                console.error("RSS fetch error:", err);
+                showToast("Error fetching RSS feed");
+            } finally {
+                rssIngestBtn.innerText = "Ingest RSS";
+            }
+        });
+    }
+
+</script>
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans min-h-screen">
+    <div class="flex h-screen overflow-hidden">
+        <!-- Sidebar Navigation -->
+        <aside class="w-64 bg-slate-900 border-r border-slate-800 p-4 flex flex-col justify-between select-none">
+            <div>
+                <div class="flex items-center space-x-2 mb-6">
+                    <div class="w-3 h-3 rounded-full bg-emerald-500 animate-pulse"></div>
+                    <h1 class="font-bold text-lg text-slate-100 tracking-wide">Mesh Station</h1>
+                </div>
+                <nav class="space-y-1">
+                    <button data-tab="tab-comms" class="nav-tab-btn w-full text-left flex items-center space-x-3 px-3 py-2 rounded-lg bg-blue-600/20 text-blue-400 font-medium text-sm cursor-pointer">
+                        <span>📡 Mesh Comms</span>
+                    </button>
+                    <button id="open-peers-btn" class="w-full text-left flex items-center space-x-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 text-sm cursor-pointer">
+                        <span>🌐 Node Topology</span>
+                    </button>
+                    <button data-tab="tab-ai" class="nav-tab-btn w-full text-left flex items-center space-x-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 text-sm cursor-pointer">
+                        <span>🧠 Local AI Pipeline</span>
+                    </button>
+                    <button data-tab="tab-rss" class="nav-tab-btn w-full text-left flex items-center space-x-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 text-sm cursor-pointer">
+                        <span>📰 RSS Ingestion</span>
+                    </button>
+                    <button data-tab="tab-saved" class="nav-tab-btn w-full text-left flex items-center space-x-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 text-sm cursor-pointer">
+                        <span>🔖 Saved Cards (<span id="sidebar-saved-count">0</span>)</span>
+                    </button>
+                    <button data-tab="tab-saved" class="nav-tab-btn w-full text-left flex items-center space-x-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 text-sm cursor-pointer">
+                        <span>🔖 Saved Reading List (<span id="sidebar-saved-count">0</span>)</span>
+                    </button>
+                </nav>
+            </div>
+
+            <!-- Hardware & Telemetry Widget -->
+            <div class="border-t border-slate-800 pt-3 space-y-2 text-xs font-mono">
+                <div class="text-slate-400 font-semibold uppercase text-[10px] tracking-wider mb-1">Server Hardware Monitor</div>
+                
+                <div>
+                    <div class="flex justify-between text-slate-400 text-[11px] mb-1">
+                        <span>CPU Load</span>
+                        <span id="telemetry-cpu">--%</span>
+                    </div>
+                    <div class="w-full bg-slate-800 h-1.5 rounded overflow-hidden">
+                        <div id="bar-cpu" class="bg-blue-500 h-full w-0 transition-all duration-500"></div>
+                    </div>
+                </div>
+
+                <div>
+                    <div class="flex justify-between text-slate-400 text-[11px] mb-1">
+                        <span>RAM Usage</span>
+                        <span id="telemetry-ram">-- / -- MB</span>
+                    </div>
+                    <div class="w-full bg-slate-800 h-1.5 rounded overflow-hidden">
+                        <div id="bar-ram" class="bg-emerald-500 h-full w-0 transition-all duration-500"></div>
+                    </div>
+                </div>
+
+                <div>
+                    <div class="flex justify-between text-slate-400 text-[11px] mb-1">
+                        <span id="telemetry-gpu-label">GPU VRAM</span>
+                        <span id="telemetry-vram">-- / -- MB</span>
+                    </div>
+                    <div class="w-full bg-slate-800 h-1.5 rounded overflow-hidden">
+                        <div id="bar-vram" class="bg-amber-500 h-full w-0 transition-all duration-500"></div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Workspace View Container -->
+        <main class="flex-1 overflow-y-auto p-6 bg-slate-950">
+            <div class="max-w-3xl mx-auto">
+                
+                <!-- Tab 1: Mesh Comms -->
+                <div id="tab-comms" class="tab-content space-y-6">
+                    <div class="flex justify-between items-center pb-4 border-b border-slate-800">
+                        <div>
+                            <h2 class="text-xl font-bold text-slate-100">Encrypted Mesh Ledger</h2>
+                            <p class="text-xs text-slate-400 font-mono">Peer-to-Peer Telemetry & Command Console</p>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <label class="text-xs font-mono text-slate-400">Model:</label>
+                            <select id="ai-model-select" onchange="setActiveModel(this.value)" class="bg-slate-900 border border-slate-700 text-xs font-mono text-amber-300 rounded px-2 py-1.5 focus:outline-none focus:border-amber-500 font-bold cursor-pointer">
+                                <option value="llama3.2:1b">llama3.2:1b</option>
+                            </select>
+                            <button id="refresh-btn" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-mono text-xs rounded shadow transition cursor-pointer">
+                                Refresh Mesh
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Region Filters -->
+                    <div class="flex space-x-2">
+                        <button data-region="#global" class="region-filter-btn px-3 py-1 text-xs font-mono rounded bg-blue-600 text-white font-semibold cursor-pointer">#global</button>
+                        <button data-region="#pottstown" class="region-filter-btn px-3 py-1 text-xs font-mono rounded bg-slate-800 text-slate-300 hover:bg-slate-700 cursor-pointer">#pottstown</button>
+                        <button data-region="#tech" class="region-filter-btn px-3 py-1 text-xs font-mono rounded bg-slate-800 text-slate-300 hover:bg-slate-700 cursor-pointer">#tech</button>
+                    </div>
+
+                    <!-- Transmit Mesh Broadcast Box -->
+                    <div class="p-4 bg-slate-900 border border-slate-800 rounded-lg shadow-md">
+                        <h3 class="text-xs font-mono font-semibold text-slate-300 uppercase tracking-wider mb-2">Transmit Mesh Broadcast</h3>
+                        <div class="space-y-3">
+                            <textarea id="broadcast-input" rows="2" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-sm font-mono text-slate-200 focus:outline-none focus:border-blue-600" placeholder="Type transmission content or magnet links..."></textarea>
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center space-x-2">
+                                    <select id="broadcast-region" class="bg-slate-950 border border-slate-800 text-xs font-mono text-slate-300 rounded p-1.5 focus:outline-none focus:border-blue-600">
+                                        <option value="#global">#global</option>
+                                        <option value="#pottstown">#pottstown</option>
+                                        <option value="#tech">#tech</option>
+                                    </select>
+                                    <select id="broadcast-type" class="bg-slate-950 border border-slate-800 text-xs font-mono text-slate-300 rounded p-1.5 focus:outline-none focus:border-blue-600">
+                                        <option value="human">human</option>
+                                        <option value="node">node</option>
+                                        <option value="ai">ai</option>
+                                    </select>
+                                </div>
+                                <button id="send-broadcast-btn" class="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-mono text-xs rounded transition-colors cursor-pointer">Broadcast</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Mesh Cards Container -->
+                    <div id="mesh-feed-container" class="space-y-4">
+                        <div class="p-4 text-center text-slate-500 font-mono text-sm">Loading mesh broadcasts from SQLite...</div>
+                    </div>
+                </div>
+
+                <!-- Tab 2: Local AI Pipeline -->
+                <div id="tab-ai" class="tab-content hidden space-y-6">
+                    <div class="pb-4 border-b border-slate-800">
+                        <h2 class="text-xl font-bold text-slate-100">Local AI Pipeline</h2>
+                        <p class="text-xs text-slate-400 font-mono">Click any model card below to set it as the active LLM engine</p>
+                    </div>
+
+                    <div class="p-4 bg-slate-900 border border-slate-800 rounded-lg space-y-3">
+                        <h3 class="text-xs font-mono font-bold text-slate-300 uppercase tracking-wider">Discovered Local LLM Engine Models</h3>
+                        <div id="ai-models-list" class="grid grid-cols-2 gap-2 text-xs font-mono text-slate-300">
+                            <div class="p-2 bg-slate-950 border border-slate-800 rounded">Querying Ollama API...</div>
+                        </div>
+                    </div>
+
+                    <div class="p-4 bg-slate-900 border border-slate-800 rounded-lg space-y-3">
+                        <div class="flex justify-between items-center">
+                            <h3 class="text-xs font-mono font-bold text-slate-300 uppercase tracking-wider">Test AI Prompt Sandbox</h3>
+                            <div class="flex items-center space-x-2">
+                                <span class="text-xs font-mono text-slate-400">Target Model:</span>
+                                <select id="sandbox-model-select" onchange="setActiveModel(this.value)" class="bg-slate-950 border border-slate-700 text-xs font-mono text-amber-300 rounded px-2 py-1 font-bold focus:outline-none cursor-pointer">
+                                    <option value="llama3.2:1b">llama3.2:1b</option>
+                                </select>
+                            </div>
+                        </div>
+                        <textarea id="ai-test-prompt" rows="3" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-amber-500" placeholder="Type a prompt to test your local LLM..."></textarea>
+                        <div class="flex justify-end items-center">
+                            <button id="ai-test-run-btn" class="px-4 py-1.5 bg-amber-600 hover:bg-amber-500 text-white font-mono text-xs rounded transition cursor-pointer">Run Inference</button>
+                        </div>
+                        <div id="ai-test-output" class="hidden p-3 bg-slate-950 border border-slate-800 rounded text-xs font-mono text-amber-300"></div>
+                    </div>
+                </div>
+
+                <!-- Tab 4: Saved Reading List -->
+                <div id="tab-saved" class="tab-content hidden space-y-6">
+                    <div class="pb-4 border-b border-slate-800 flex justify-between items-center">
+                        <div>
+                            <h2 class="text-xl font-bold text-slate-100">Saved Reading List</h2>
+                            <p class="text-xs text-slate-400 font-mono">Bookmarked mesh and RSS feed items stored locally in app</p>
+                        </div>
+                        <button onclick="clearAllSaved()" class="px-3 py-1 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-800/50 font-mono text-xs rounded transition cursor-pointer">
+                            Clear All Bookmarks
+                        </button>
+                    </div>
+                    <div id="saved-feed-container" class="space-y-4">
+                        <div class="p-4 text-center text-slate-500 font-mono text-sm">No bookmarked cards yet. Click 'Save Card' on any mesh broadcast!</div>
+                    </div>
+                </div>
+
+                <!-- Tab 4: Saved Cards -->
+                <div id="tab-saved" class="tab-content hidden space-y-6">
+                    <div class="pb-4 border-b border-slate-800 flex justify-between items-center">
+                        <div>
+                            <h2 class="text-xl font-bold text-slate-100">Saved Cards</h2>
+                            <p class="text-xs text-slate-400 font-mono">Your locally bookmarked mesh broadcasts and RSS items</p>
+                        </div>
+                        <button onclick="clearAllSaved()" class="px-3 py-1 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-800/50 font-mono text-xs rounded transition cursor-pointer">
+                            Clear All Bookmarks
+                        </button>
+                    </div>
+                    <div id="saved-feed-container" class="space-y-4">
+                        <div class="p-4 text-center text-slate-500 font-mono text-sm">No bookmarked cards yet. Click 'Save Card' on any mesh broadcast!</div>
+                    </div>
+                </div>
+
+                <!-- Tab 3: RSS Ingestion -->
+                <div id="tab-rss" class="tab-content hidden space-y-6">
+                    <div class="pb-4 border-b border-slate-800 flex justify-between items-center">
+                        <div>
+                            <h2 class="text-xl font-bold text-slate-100">RSS / Atom Feed Ingestion</h2>
+                            <p class="text-xs text-slate-400 font-mono">Convert web news feeds directly into mesh broadcasts</p>
+                        </div>
+                        <button onclick="switchView('mesh')" id="view-toggle-btn" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 font-mono text-xs rounded transition cursor-pointer">
+                            🔖 View Saved Cards (<span id="saved-count">0</span>)
+                        </button>
+                    </div>
+
+                    <!-- Preset Feeds Bar -->
+                    <div class="p-3 bg-slate-900 border border-slate-800 rounded-lg space-y-2">
+                        <div class="text-[10px] font-mono uppercase tracking-wider text-slate-400 font-bold">Quick Presets / Saved Feeds</div>
+                        <div class="flex flex-wrap gap-2">
+                            <button onclick="setPresetFeed('https://news.ycombinator.com/rss', '#tech')" class="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-xs font-mono text-amber-400 rounded transition cursor-pointer">Hacker News</button>
+                            <button onclick="setPresetFeed('https://feeds.bbci.co.uk/news/rss.xml', '#global')" class="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-xs font-mono text-blue-400 rounded transition cursor-pointer">BBC News</button>
+                            <button onclick="setPresetFeed('https://www.kernel.org/feeds/atom.xml', '#tech')" class="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-xs font-mono text-emerald-400 rounded transition cursor-pointer">Linux Kernel</button>
+                            <button onclick="setPresetFeed('https://www.reddit.com/r/linux/.rss', '#tech')" class="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-xs font-mono text-purple-400 rounded transition cursor-pointer">r/linux</button>
+                        </div>
+                    </div>
+
+                    <div class="p-4 bg-slate-900 border border-slate-800 rounded-lg space-y-4">
+                        <h3 class="text-sm font-mono font-bold text-slate-200">Ingest Feed into Mesh Ledger</h3>
+                        <div class="space-y-3">
+                            <div>
+                                <label class="text-xs font-mono text-slate-400">RSS / Atom Feed URL:</label>
+                                <input id="rss-url-input" type="text" value="https://news.ycombinator.com/rss" class="w-full mt-1 bg-slate-950 border border-slate-800 rounded p-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-blue-600">
+                            </div>
+                            <div class="flex items-center justify-between gap-2">
+                                <div class="flex items-center space-x-2">
+                                    <select id="rss-target-region" class="bg-slate-950 border border-slate-800 text-xs font-mono text-slate-300 rounded p-1.5 cursor-pointer">
+                                        <option value="#tech">#tech</option>
+                                        <option value="#global">#global</option>
+                                        <option value="#pottstown">#pottstown</option>
+                                    </select>
+                                    
+                                    <!-- Multi-Tag Pill Container -->
+                                    <div id="tag-pills-container" class="flex flex-wrap gap-1.5 items-center">
+                                        <button type="button" onclick="toggleTag(this)" data-tag="rss" class="tag-pill px-2 py-1 bg-amber-600 text-white text-[11px] font-mono rounded cursor-pointer transition">#rss</button>
+                                        <button type="button" onclick="toggleTag(this)" data-tag="news" class="tag-pill px-2 py-1 bg-slate-800 text-slate-400 text-[11px] font-mono rounded cursor-pointer transition">#news</button>
+                                        <button type="button" onclick="toggleTag(this)" data-tag="linux" class="tag-pill px-2 py-1 bg-slate-800 text-slate-400 text-[11px] font-mono rounded cursor-pointer transition">#linux</button>
+                                        <button type="button" onclick="addCustomTagPrompt()" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-blue-400 text-[11px] font-mono rounded cursor-pointer">+ Add Tag</button>
+                                    </div>
+                                </div>
+                                <button id="rss-ingest-btn" class="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-mono text-xs rounded cursor-pointer">Fetch & Ingest Feed</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </main>
+    </div>
+
+    <!-- Node Topology Modal -->
+    <div id="peers-modal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm hidden flex items-center justify-center z-50">
+        <div class="bg-slate-900 border border-slate-800 rounded-lg p-6 w-full max-w-lg shadow-2xl space-y-4">
+            <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+                <h3 class="text-sm font-mono font-bold text-slate-200">Active Peer Topology</h3>
+                <button id="close-peers-btn" class="text-slate-400 hover:text-slate-200 font-mono text-xs cursor-pointer">✕</button>
+            </div>
+            <div id="peers-list" class="space-y-2 font-mono text-xs">
+                <div class="text-slate-500">Querying peer list...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let allBroadcasts = [];
+        let availableModels = [];
+        let activeRegion = '#global';
+        let selectedModel = 'llama3.2:1b';
+        let savedCardIds = JSON.parse(localStorage.getItem('mesh_saved_cards') || '[]');
+        let currentViewMode = 'mesh';
+
+        function showToast(msg) {
+            let toast = document.getElementById("ui-toast");
+            if (!toast) {
+                toast = document.createElement("div");
+                toast.id = "ui-toast";
+                toast.className = "fixed top-5 right-5 bg-emerald-600 text-white font-mono text-xs px-4 py-2 rounded shadow-lg z-50 transition-opacity duration-300 opacity-0";
+                document.body.appendChild(toast);
+            }
+            toast.innerText = msg;
+            toast.classList.remove("opacity-0");
+            toast.classList.add("opacity-100");
+            setTimeout(() => {
+                toast.classList.remove("opacity-100");
+                toast.classList.add("opacity-0");
+            }, 2500);
+        }
+
+        function setPresetFeed(url, region) {
+            document.getElementById('rss-url-input').value = url;
+            document.getElementById('rss-target-region').value = region;
+            showToast(`Preset loaded: ${url}`);
+        }
+
+        function toggleSaveCard(id) {
+            const stringId = String(id);
+            const idx = savedCardIds.indexOf(stringId);
+            if (idx > -1) {
+                savedCardIds.splice(idx, 1);
+                showToast("Card removed from saved bookmarks");
+            } else {
+                savedCardIds.push(stringId);
+                showToast("Card saved to bookmarks!");
+            }
+            localStorage.setItem('mesh_saved_cards', JSON.stringify(savedCardIds));
+            updateSavedCount();
+            renderBroadcasts();
+        }
+
+        function updateSavedCount() {
+            const badge = document.getElementById('saved-count');
+            if (badge) badge.innerText = savedCardIds.length;
+            const sidebarBadge = document.getElementById('sidebar-saved-count');
+            if (sidebarBadge) sidebarBadge.innerText = savedCardIds.length;
+        }
+
+        function clearAllSaved() {
+            if (confirm('Clear all saved bookmarks from app storage?')) {
+                savedCardIds = [];
+                localStorage.removeItem('mesh_saved_cards');
+                updateSavedCount();
+                renderBroadcasts();
+                showToast("Cleared all bookmarked cards");
+            }
+        }
+
+        function switchView(mode) {
+            currentViewMode = mode;
+            const btn = document.getElementById('view-toggle-btn');
+            if (mode === 'saved') {
+                if (btn) btn.innerText = "📡 Back to Mesh Stream";
+            } else {
+                if (btn) btn.innerText = `🔖 View Saved Cards (${savedCardIds.length})`;
+            }
+            renderBroadcasts();
+        }
+
+        function ingestMagnet(magnet) {
+            const textArea = document.createElement("textarea");
+            textArea.value = magnet;
+            textArea.style.position = "fixed";
+            textArea.style.left = "-999999px";
+            document.body.appendChild(textArea);
+            textArea.select();
+            try {
+                document.execCommand("copy");
+                showToast("Magnet URI copied to clipboard!");
+            } catch (err) {
+                prompt("Copy Magnet URI manually:", magnet);
+            }
+            document.body.removeChild(textArea);
+        }
+
+        function toggleTag(btn) {
+            btn.classList.toggle('bg-amber-600');
+            btn.classList.toggle('text-white');
+            btn.classList.toggle('bg-slate-800');
+            btn.classList.toggle('text-slate-400');
+        }
+
+        function addCustomTagPrompt() {
+            const tagName = prompt('Enter custom tag name (e.g. hardware, crypto):');
+            if (tagName && tagName.trim()) {
+                const clean = tagName.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '');
+                const container = document.getElementById('tag-pills-container');
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'tag-pill px-2 py-1 bg-amber-600 text-white text-[11px] font-mono rounded cursor-pointer transition';
+                btn.setAttribute('data-tag', clean);
+                btn.innerText = `#${clean}`;
+                btn.onclick = function() { toggleTag(this); };
+                container.insertBefore(btn, container.lastElementChild);
+            }
+        }
+
+        function setActiveModel(modelName) {
+            selectedModel = modelName;
+            const sel1 = document.getElementById('ai-model-select');
+            const sel2 = document.getElementById('sandbox-model-select');
+            if (sel1) sel1.value = modelName;
+            if (sel2) sel2.value = modelName;
+            renderModelCards();
+            showToast(`Active model: ${modelName}`);
+        }
+
+        function renderModelCards() {
+            const list = document.getElementById('ai-models-list');
+            if (!list || !availableModels.length) return;
+
+            list.innerHTML = availableModels.map(m => {
+                const isSelected = m.name === selectedModel;
+                const borderClass = isSelected ? 'border-emerald-500 bg-emerald-950/40' : 'border-slate-800 bg-slate-950 hover:border-slate-700';
+                const badge = isSelected ? '<span class="text-[10px] text-emerald-400 font-bold uppercase tracking-wider bg-emerald-950 border border-emerald-800 px-1.5 py-0.5 rounded">Active</span>' : '';
+                return `
+                    <div onclick="setActiveModel('${m.name}')" class="p-2.5 ${borderClass} border rounded-lg cursor-pointer transition-all flex justify-between items-center select-none hover:shadow-md">
+                        <div>
+                            <div class="text-amber-400 font-bold text-xs">${m.name}</div>
+                            <div class="text-[10px] text-slate-500">${m.details && m.details.parameter_size ? m.details.parameter_size : 'Ollama Model'}</div>
+                        </div>
+                        ${badge}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function onSummarizeClick(btn) {
+            const id = btn.getAttribute('data-id');
+            const item = allBroadcasts.find(b => String(b.id) === String(id));
+            if (item) {
+                summarizeBroadcast(id, item.content || '');
+            } else {
+                summarizeBroadcast(id, 'Broadcast item ' + id);
+            }
+        }
+
+        async function summarizeBroadcast(id, content) {
+            const btn = document.getElementById(`ai-btn-${id}`);
+            const summaryBox = document.getElementById(`ai-summary-${id}`);
+
+            if (btn) btn.innerText = "⚡ Summarizing...";
+
+            try {
+                const res = await fetch('/api/ai/summarize', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id, content, model: selectedModel })
+                });
+                const data = await res.json();
+                if (data.status === 'ok' && summaryBox) {
+                    summaryBox.classList.remove('hidden');
+                    summaryBox.innerText = `🤖 ${data.summary}`;
+                    if (btn) btn.innerText = "⚡ Refreshed Summary";
+                } else if (summaryBox) {
+                    summaryBox.classList.remove('hidden');
+                    summaryBox.innerText = `⚠️ AI Offline or Timed Out`;
+                    if (btn) btn.innerText = "⚡ Summarize";
+                }
+            } catch (e) {
+                if (summaryBox) {
+                    summaryBox.classList.remove('hidden');
+                    summaryBox.innerText = `⚠️ Failed to query local LLM`;
+                }
+                if (btn) btn.innerText = "⚡ Summarize";
+            }
+        }
+
+        async function fetchAiModels() {
+            try {
+                const res = await fetch('/api/ai/models');
+                const data = await res.json();
+                if (data.models && Array.isArray(data.models)) {
+                    availableModels = data.models;
+                    
+                    const optionsHtml = availableModels.map(m => `<option value="${m.name}">${m.name}</option>`).join('');
+                    const sel1 = document.getElementById('ai-model-select');
+                    const sel2 = document.getElementById('sandbox-model-select');
+                    if (sel1) sel1.innerHTML = optionsHtml;
+                    if (sel2) sel2.innerHTML = optionsHtml;
+
+                    if (availableModels.some(m => m.name === 'llama3.2:1b')) {
+                        selectedModel = 'llama3.2:1b';
+                    } else if (availableModels.length > 0) {
+                        selectedModel = availableModels[0].name;
+                    }
+
+                    if (sel1) sel1.value = selectedModel;
+                    if (sel2) sel2.value = selectedModel;
+
+                    renderModelCards();
+                }
+            } catch (e) {
+                console.warn('Could not fetch Ollama models:', e);
+            }
+        }
+
+        async function fetchTelemetry() {
+            try {
+                const res = await fetch('/api/telemetry');
+                const data = await res.json();
+                document.getElementById('telemetry-cpu').innerText = `${data.cpu_usage_pct}%`;
+                document.getElementById('bar-cpu').style.width = `${data.cpu_usage_pct}%`;
+
+                document.getElementById('telemetry-ram').innerText = `${data.ram_used_mb} / ${data.ram_total_mb} MB`;
+                document.getElementById('bar-ram').style.width = `${(data.ram_used_mb / data.ram_total_mb) * 100}%`;
+
+                document.getElementById('telemetry-vram').innerText = `${data.vram_used_mb} / ${data.vram_total_mb} MB`;
+                document.getElementById('bar-vram').style.width = `${(data.vram_used_mb / data.vram_total_mb) * 100}%`;
+                if (data.gpu_name) document.getElementById('telemetry-gpu-label').innerText = `${data.gpu_name} VRAM`;
+            } catch (e) {
+                console.warn('Telemetry offline:', e);
+            }
+        }
+
+        let directMessages = [];
+
+        async function loadDirectMessages() {
+            try {
+                const res = await fetch('/api/dm');
+                const data = await res.json();
+                directMessages = Array.isArray(data) ? data : (data.messages || []);
+                renderDirectMessages();
+            } catch (e) {
+                console.warn('DM endpoint offline or not initialized:', e);
+                // Fallback demo state if backend route is pending
+                renderDirectMessages();
+            }
+        }
+
+        async function sendDirectMessage() {
+            const recipient = document.getElementById('dm-recipient-input').value.trim();
+            const content = document.getElementById('dm-input').value.trim();
+            const protocol = document.getElementById('dm-encryption-select').value;
+
+            if (!recipient || !content) {
+                showToast("Please enter recipient DID and message content");
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/dm', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ recipient, content, protocol })
+                });
+                if (res.ok) {
+                    document.getElementById('dm-input').value = '';
+                    showToast("Encrypted DM transmitted successfully!");
+                    loadDirectMessages();
+                } else {
+                    showToast("Failed to transmit DM");
+                }
+            } catch (e) {
+                // Local simulation fallback
+                directMessages.unshift({
+                    id: Date.now(),
+                    sender: 'self',
+                    recipient: recipient,
+                    content: content,
+                    protocol: protocol,
+                    timestamp: Math.floor(Date.now() / 1000)
+                });
+                document.getElementById('dm-input').value = '';
+                showToast("Encrypted DM sent (local simulation)");
+                renderDirectMessages();
+            }
+        }
+
+        function renderDirectMessages() {
+            const container = document.getElementById('dm-inbox-container');
+            const badge = document.getElementById('dm-unread-count');
+            if (!container) return;
+
+            if (badge) badge.innerText = directMessages.length;
+
+            if (directMessages.length === 0) {
+                container.innerHTML = `<div class="p-4 text-center text-slate-500 font-mono text-sm">No direct messages in inbox.</div>`;
+                return;
+            }
+
+            container.innerHTML = directMessages.map(dm => `
+                <div class="p-4 bg-slate-900 border border-slate-800 rounded-lg shadow-md space-y-2">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center space-x-2">
+                            <span class="px-2 py-0.5 text-xs font-mono font-semibold bg-emerald-950 text-emerald-300 rounded border border-emerald-800/50">🔒 E2EE (${dm.protocol || 'AES-256'})</span>
+                            <span class="text-xs font-mono text-slate-400">To: <span class="text-slate-200">${dm.recipient || 'Peer'}</span></span>
+                        </div>
+                        <span class="text-xs font-mono text-slate-400">${dm.timestamp ? new Date(dm.timestamp * 1000).toLocaleTimeString() : ''}</span>
+                    </div>
+                    <p class="text-sm text-slate-200">${dm.content || ''}</p>
+                </div>
+            `).join('');
+        }
+
+
+        async function fetchBroadcasts() {
+            try {
+                const res = await fetch('/api/broadcasts');
+                const data = await res.json();
+                allBroadcasts = Array.isArray(data) ? data : (data.broadcasts || []);
+                renderBroadcasts();
+            } catch (err) {
+                console.error('Failed to load broadcasts:', err);
+            }
+        }
+
+                        function renderBroadcasts() {
+            const container = document.getElementById('mesh-feed-container');
+            const rssContainer = document.getElementById('rss-feed-container');
+            const savedContainer = document.getElementById('saved-feed-container');
+            if (!container) return;
+
+            const normActive = activeRegion.replace(/^#/, '').toLowerCase();
+            
+            // Separate Chat / Human / Node broadcasts from RSS feed items
+            const chatBroadcasts = allBroadcasts.filter(b => {
+                const isRss = (b.sender_type === 'rss' || (b.ai_tag && b.ai_tag.includes('NEWS')) || (b.content || '').includes('rss-bot'));
+                if (isRss) return false;
+                if (normActive === 'global' || normActive === '') return true;
+                const rNorm = (b.region || '').replace(/^#/, '').toLowerCase();
+                return rNorm === normActive;
+            });
+
+            const rssBroadcasts = allBroadcasts.filter(b => {
+                const isRss = (b.sender_type === 'rss' || (b.ai_tag && b.ai_tag.includes('NEWS')) || (b.content || '').includes('rss-bot'));
+                return isRss;
+            });
+
+            const savedFiltered = allBroadcasts.filter(b => savedCardIds.includes(String(b.id)));
+
+            const renderCardHtml = (b) => {
+                const hasMagnet = b.content && b.content.includes('magnet:?');
+                const magnetMatch = hasMagnet ? b.content.match(/magnet:\?[^\s\"]+/) : null;
+                const magnetUrl = magnetMatch ? magnetMatch[0] : null;
+
+                const urlMatch = (b.content || '').match(/(https?:\/\/[^\s]+)/);
+                let extractedUrl = urlMatch ? urlMatch[0].replace(/[.,;!?)>\x27\"]$/, '') : null;
+                
+                if (extractedUrl && extractedUrl.includes('at_medium=')) {
+                    extractedUrl = extractedUrl.split('?')[0];
+                }
+
+                let displayLinkText = 'Open Link';
+                if (extractedUrl) {
+                    try {
+                        const parsed = new URL(extractedUrl);
+                        displayLinkText = parsed.hostname.replace('www.', '') + parsed.pathname;
+                        if (displayLinkText.length > 35) {
+                            displayLinkText = displayLinkText.substring(0, 32) + '...';
+                        }
+                    } catch(e) {
+                        displayLinkText = extractedUrl.replace(/^https?:\/\//, '');
+                    }
+                }
+
+                let cleanContent = (b.content || '').replace(/<!\[CDATA\[([^\]]+)\]\]>/g, '$1');
+                if (extractedUrl) {
+                    cleanContent = cleanContent.replace(urlMatch[0], '').trim();
+                }
+                cleanContent = cleanContent.replace(/^[-–—\s]+/, '').trim();
+                if (!cleanContent || cleanContent === '📰') {
+                    cleanContent = 'Broadcast item #' + b.id;
+                }
+
+                const isSaved = savedCardIds.includes(String(b.id));
+
+                return `
+                <div class="p-4 bg-slate-900 border border-slate-800 rounded-lg shadow-md space-y-2">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center space-x-2">
+                            <span class="px-2 py-0.5 text-xs font-mono font-semibold bg-blue-950 text-blue-300 rounded border border-blue-800/50">${b.region || '#global'}</span>
+                            ${b.ai_tag ? `<span class="px-2 py-0.5 text-[10px] font-mono font-semibold bg-amber-950 text-amber-300 rounded border border-amber-800/50">${b.ai_tag}</span>` : ''}
+                        </div>
+                        <span class="text-xs font-mono text-slate-400">${b.timestamp ? new Date(b.timestamp * 1000).toLocaleTimeString() : ''}</span>
+                    </div>
+                    <div class="text-xs font-mono text-slate-400">Sender: <span class="text-slate-300">${b.sender_did || 'unknown'}</span> (${b.sender_type || 'node'})</div>
+                    <p class="text-sm text-slate-200">${cleanContent}</p>
+                    
+                    <div id="ai-summary-${b.id}" class="hidden p-2 bg-slate-950 border border-slate-800 rounded text-xs font-mono text-amber-300/90"></div>
+
+                    <div class="flex flex-wrap items-center gap-2 pt-2">
+                        <button id="ai-btn-${b.id}" data-id="${b.id}" onclick="onSummarizeClick(this)" class="px-3 py-1 bg-amber-600/20 hover:bg-amber-600/30 text-amber-400 border border-amber-800/50 font-mono text-xs rounded transition cursor-pointer">
+                            ⚡ Summarize
+                        </button>
+                        ${extractedUrl ? `
+                            <a href="${extractedUrl}" target="_blank" rel="noopener noreferrer" class="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white font-mono text-xs rounded transition flex items-center space-x-1">
+                                <span>🔗 ${displayLinkText}</span>
+                            </a>
+                        ` : ''}
+                        ${magnetUrl ? `
+                            <button onclick="ingestMagnet('${magnetUrl}')" class="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-xs rounded transition cursor-pointer">
+                                🧲 Copy Magnet URI
+                            </button>
+                        ` : ''}
+                        <button onclick="toggleSaveCard('${b.id}')" class="px-2.5 py-1 ${isSaved ? 'bg-purple-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'} font-mono text-xs rounded transition cursor-pointer">
+                            ${isSaved ? '🔖 Saved' : '📌 Save Card'}
+                        </button>
+                    </div>
+                </div>
+            `;
+            };
+
+            if (chatBroadcasts.length === 0) {
+                container.innerHTML = `<div class="p-4 text-center text-slate-500 font-mono text-sm">No chat messages for ${activeRegion}. Send a message above!</div>`;
+            } else {
+                container.innerHTML = chatBroadcasts.map(renderCardHtml).join('');
+            }
+
+            if (rssContainer) {
+                if (rssBroadcasts.length === 0) {
+                    rssContainer.innerHTML = `<div class="p-4 text-center text-slate-500 font-mono text-sm">No RSS web feeds ingested yet. Use RSS Ingestion Manager to add feeds.</div>`;
+                } else {
+                    rssContainer.innerHTML = rssBroadcasts.map(renderCardHtml).join('');
+                }
+            }
+
+            if (savedContainer) {
+                if (savedFiltered.length === 0) {
+                    savedContainer.innerHTML = `<div class="p-4 text-center text-slate-500 font-mono text-sm">No bookmarked cards yet. Click 'Save Card' on any chat or feed item!</div>`;
+                } else {
+                    savedContainer.innerHTML = savedFiltered.map(renderCardHtml).join('');
+                }
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            updateSavedCount();
+
+            document.querySelectorAll('.nav-tab-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const targetId = btn.getAttribute('data-tab');
+                    document.querySelectorAll('.tab-content').forEach(tc => tc.classList.add('hidden'));
+                    document.querySelectorAll('.nav-tab-btn').forEach(tb => {
+                        tb.classList.remove('bg-blue-600/20', 'text-blue-400', 'font-medium');
+                        tb.classList.add('text-slate-400');
+                    });
+
+                    document.getElementById(targetId).classList.remove('hidden');
+                    btn.classList.add('bg-blue-600/20', 'text-blue-400', 'font-medium');
+                    btn.classList.remove('text-slate-400');
+                });
+            });
+
+            document.querySelectorAll('.region-filter-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    document.querySelectorAll('.region-filter-btn').forEach(b => { 
+                        b.classList.remove('bg-blue-600', 'text-white'); 
+                        b.classList.add('bg-slate-800', 'text-slate-300'); 
+                    });
+                    e.target.classList.remove('bg-slate-800', 'text-slate-300'); 
+                    e.target.classList.add('bg-blue-600', 'text-white');
+                    activeRegion = e.target.getAttribute('data-region');
+                    renderBroadcasts();
+                });
+            });
+
+            const refreshBtn = document.getElementById('refresh-btn');
+            if (refreshBtn) refreshBtn.addEventListener('click', fetchBroadcasts);
+
+            const sendBtn = document.getElementById('send-broadcast-btn');
+            if (sendBtn) {
+                    sendBtn.addEventListener('click', async () => {
+                    const input = document.getElementById('broadcast-input');
+                    const content = input ? input.value.trim() : '';
+                    const region = document.getElementById('broadcast-region').value;
+                    const sender_type = document.getElementById('broadcast-type').value;
+
+                    if (!content) return;
+
+                    try {
+                        const res = await fetch('/api/broadcasts', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ region, content, sender_type })
+                        });
+                        if (res.ok) {
+                            input.value = '';
+                            await loadDirectMessages();
+            fetchBroadcasts();
+                        }
+                    } catch (err) {
+                        console.error('Failed to transmit broadcast:', err);
+                    }
+                });
+            }
+
+            
+                    let raw_url = document.getElementById('rss-url-input').value.trim();
+                    const feed_url = raw_url.split(']')[0].split(')')[0].split(' ')[0];
+                    document.getElementById('rss-url-input').value = feed_url;
+                    
+                    const region = document.getElementById('rss-target-region').value;
+                    const activeTags = Array.from(document.querySelectorAll('.tag-pill'))
+.filter(b => b.classList.contains('bg-amber-600'))
+.map(b => b.getAttribute('data-tag'));
+
+                    rssIngestBtn.innerText = "Fetching...";
+
+                    try {
+                        const res = await fetch('/api/rss/ingest', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ feed_url, region, tags: activeTags })
+                        });
+                        const data = await res.json();
+                        if (data.status === 'ok') {
+                            showToast(`Ingested ${data.count} items into ${region}`);
+                            await loadDirectMessages();
+            fetchBroadcasts();
+                        } else {
+                            showToast("Failed to fetch RSS feed");
+                        }
+                    } catch (e) {
+                        showToast("RSS ingestion error");
+                    }
+                    rssIngestBtn.innerText = "Fetch & Ingest Feed";
+                });
+            }
+
+            const aiRunBtn = document.getElementById('ai-test-run-btn');
+            if (aiRunBtn) {
+aiRunBtn.addEventListener('click', async () => {
+                    const promptText = document.getElementById('ai-test-prompt').value;
+                    const out = document.getElementById('ai-test-output');
+                    if (!promptText) return;
+
+                    out.classList.remove('hidden');
+                    out.innerText = `Running inference with ${selectedModel}...`;
+
+                    try {
+                        const res = await fetch('/api/ai/summarize', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ id: "test", content: promptText, model: selectedModel })
+                        });
+                        const data = await res.json();
+                        out.innerText = data.summary || "No response";
+                    } catch (e) {
+                        out.innerText = "Error running local model.";
+                    }
+                });
+            }
+
+            const peersModal = document.getElementById('peers-modal');
+            const openPeersBtn = document.getElementById('open-peers-btn');
+            if (openPeersBtn && peersModal) {
+openPeersBtn.addEventListener('click', async () => {
+                    peersModal.classList.remove('hidden');
+                    try {
+                        const res = await fetch('/api/peers');
+                        const peers = await res.json();
+                        document.getElementById('peers-list').innerHTML = peers.map(p => `
+                            <div class="flex justify-between items-center p-2 bg-slate-950 border border-slate-800 rounded">
+                                <div>
+                                    <div class="text-slate-200 font-semibold">${p.did}</div>
+                                    <div class="text-slate-500 text-[10px]">${p.region}</div>
+                                </div>
+                                <div class="text-right">
+                                    <span class="text-emerald-400 font-bold">${p.status}</span>
+                                    <div class="text-slate-500 text-[10px]">${p.latency_ms} ms</div>
+                                </div>
+                            </div>
+                        `).join('');
+                    } catch (e) {
+                        document.getElementById('peers-list').innerHTML = '<div class="text-red-400">Failed to query peers</div>';
+                    }
+                });
+            }
+
+            const closePeersBtn = document.getElementById('close-peers-btn');
+            if (closePeersBtn && peersModal) {
+                closePeersBtn.addEventListener('click', () => {
+                    peersModal.classList.add('hidden');
+                });
+            }
+
+            fetchAiModels();
+            loadDirectMessages();
+            fetchBroadcasts();
+            fetchTelemetry();
+            setInterval(fetchTelemetry, 3000);
+        });
+    </script>
+</body>
+</html>
+

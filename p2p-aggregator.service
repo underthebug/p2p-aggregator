@@ -1,0 +1,21 @@
+[Unit]
+Description=P2P Aggregator Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=russ2112
+WorkingDirectory=/home/russ2112/p2p-aggregator
+ExecStart=/home/russ2112/p2p-aggregator/target/release/p2p-aggregator --config node1_config.toml
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+# Security Hardening (Allow writing to /home/russ2112/p2p-aggregator/data and /var/lib/p2p-aggregator)
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=false
+ReadWritePaths=/home/russ2112/p2p-aggregator /var/lib/p2p-aggregator
+
+[Install]
+WantedBy=multi-user.target

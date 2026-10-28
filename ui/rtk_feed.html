@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <title>Mesh Station - Real Time Knowledge Feed (R.T.K)</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans h-screen flex flex-col overflow-hidden">
+    <!-- Top Header -->
+    <header class="bg-slate-900 border-b border-slate-800 px-6 py-3 flex items-center justify-between z-20">
+        <div class="flex items-center space-x-3">
+            <button id="sidebar-toggle" class="p-1.5 rounded bg-slate-800 text-slate-300 cursor-pointer" title="Toggle Sidebar">☰</button>
+            <div class="w-3 h-3 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_8px_#10b981]"></div>
+            <h1 class="text-lg font-bold tracking-wider">Mesh Station</h1>
+        </div>
+        <div class="flex items-center space-x-4 text-xs font-mono text-slate-400">
+            <span>Node Port: 41871</span>
+            <span class="text-emerald-400">R.T.K Agents: <span id="active-agent-count">0</span> Active</span>
+        </div>
+    </header>
+
+    <div class="flex flex-1 overflow-hidden relative">
+        <!-- Sidebar -->
+        <aside id="sidebar" class="w-64 bg-slate-900/90 border-r border-slate-800 p-4 space-y-2 flex flex-col justify-between z-10">
+            <div class="space-y-2">
+                <a href="index.html" class="flex items-center space-x-3 px-3 py-2 rounded-lg hover:bg-slate-800 text-slate-400 transition"><span>📡</span><span>Mesh Comms</span></a>
+                <a href="rtk_feed.html" class="flex items-center space-x-3 px-3 py-2 rounded-lg bg-blue-600/20 text-blue-400 font-medium border border-blue-500/30"><span>🧠</span><span>R.T.K Feed</span></a>
+                <a href="user_rss.html" class="flex items-center space-x-3 px-3 py-2 rounded-lg hover:bg-slate-800 text-slate-400 transition"><span>🌐</span><span>User RSS Feeds</span></a>
+                <a href="ai.html" class="flex items-center space-x-3 px-3 py-2 rounded-lg hover:bg-slate-800 text-slate-400 transition"><span>⚡</span><span>AI Node</span></a>
+                <a href="radio.html" class="flex items-center space-x-3 px-3 py-2 rounded-lg hover:bg-slate-800 text-slate-400 transition"><span>📻</span><span>Radio Streams</span></a>
+            </div>
+            <div class="bg-slate-950/60 p-3 rounded text-[11px] font-mono text-slate-400 space-y-1">
+                <div class="text-[10px] text-slate-500 uppercase">Agent Sentinel LED</div>
+                <div class="flex items-center justify-between"><span>Monitor Daemon</span><div class="w-2.5 h-2.5 rounded-full bg-blue-500 animate-ping"></div></div>
+            </div>
+        </aside>
+
+        <!-- Collapsed Taskbar -->
+        <div id="collapsed-taskbar" class="w-14 bg-slate-900 border-r border-slate-800 py-4 flex flex-col items-center space-y-6 hidden z-10">
+            <button id="expand-sidebar-btn" class="p-2 rounded text-slate-300 cursor-pointer">➔</button>
+            <div class="flex flex-col space-y-4 items-center">
+                <a href="index.html" title="Mesh">📡</a><a href="rtk_feed.html" title="R.T.K">🧠</a><a href="user_rss.html" title="RSS">🌐</a><a href="ai.html" title="AI">⚡</a><a href="radio.html" title="Radio">📻</a>
+            </div>
+        </div>
+
+        <!-- Main Content Area -->
+        <main class="flex-1 p-6 overflow-y-auto space-y-6">
+            <div class="max-w-4xl mx-auto space-y-6">
+                <div class="flex items-center justify-between border-b border-slate-800 pb-4">
+                    <div>
+                        <h2 class="text-xl font-bold tracking-tight">Real Time Knowledge (R.T.K) Agent Matrix</h2>
+                        <p class="text-xs text-slate-400 mt-0.5">Deploy persistent AI search sentinel cards with individual timers & match streams</p>
+                    </div>
+                </div>
+
+                <!-- Agent Creator Control Panel -->
+                <div class="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-3 shadow-md font-mono text-xs">
+                    <div class="text-slate-300 font-bold flex items-center space-x-2">
+                        <span>⚡</span><span>Spawn New AI Search Agent</span>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <input type="text" id="new-agent-query" placeholder="Target keyword (e.g. 'retro', 'synth', 'lore')..." class="bg-slate-950 border border-slate-800 p-2.5 rounded text-slate-200 focus:outline-none focus:border-blue-500 md:col-span-2" />
+                        <div class="flex space-x-2">
+                            <select id="new-agent-timer" class="bg-slate-950 border border-slate-800 p-2.5 rounded text-slate-200 focus:outline-none focus:border-blue-500 flex-1">
+                                <option value="60">1 Minute</option>
+                                <option value="300" selected>5 Minutes</option>
+                                <option value="900">15 Minutes</option>
+                                <option value="0">Continuous</option>
+                            </select>
+                            <button id="spawn-agent-btn" class="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded cursor-pointer transition">Deploy Agent</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Active Search Agent Cards Container -->
+                <div class="space-y-4">
+                    <h3 class="text-xs font-mono text-slate-400 uppercase tracking-wider">Active Sentinel Agents</h3>
+                    <div id="agents-container" class="space-y-4">
+                        <div class="p-6 bg-slate-900/50 border border-slate-800/80 rounded-lg text-center text-slate-500 font-mono text-xs">
+                            No active search agents deployed. Configure and launch a sentinel above.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Master Feed Stream Source Pool -->
+                <div class="space-y-3 pt-4 border-t border-slate-800">
+                    <h3 class="text-xs font-mono text-slate-400 uppercase tracking-wider">Incoming Knowledge Stream Buffer</h3>
+                    <div id="master-feed-pool" class="space-y-3 font-mono text-xs">
+                        <!-- Populated dynamically -->
+                    </div>
+                </div>
+
+            </div>
+        </main>
+    </div>
+
+    <!-- Agent Logic Script -->
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const sb = document.getElementById('sidebar');
+            const cb = document.getElementById('collapsed-taskbar');
+            document.getElementById('sidebar-toggle').onclick = () => { sb.classList.toggle('hidden'); cb.classList.toggle('hidden'); };
+            document.getElementById('expand-sidebar-btn').onclick = () => { sb.classList.toggle('hidden'); cb.classList.toggle('hidden'); };
+
+            let agents = [];
+
+            // Master Knowledge Stream Pool
+            window.RTKStreamItems = [
+                {
+                    content: "Retrowave and synthwave audio transmissions intercepted from localized regional nodes. Continuous DJ rotation active.",
+                    tags: "retro music synthwave entertainment",
+                    source: "#entertainment",
+                    time: "10:14 AM"
+                },
+                {
+                    content: "Arcade gaming history archive synchronized: High-score logs from 1980s retro cabinets indexed into local SQLite memory.",
+                    tags: "trivia lore history arcade gaming",
+                    source: "#trivia",
+                    time: "09:45 AM"
+                },
+                {
+                    content: "Historical trade tokens and ribald novelty items cataloged across regional collectors network. Entertainment feed active.",
+                    tags: "culture humor novelty exonumia",
+                    source: "#culture",
+                    time: "09:12 AM"
+                }
+            ];
+
+            function renderMasterPool() {
+                const pool = document.getElementById('master-feed-pool');
+                if (!pool) return;
+                pool.innerHTML = window.RTKStreamItems.map(item => `
+                    <div class="master-item p-3 bg-slate-900 border border-slate-800 rounded-lg shadow space-y-1">
+                        <div class="flex items-center justify-between text-slate-400 text-[10px]">
+                            <span class="text-purple-400 font-bold">${item.source}</span>
+                            <span>${item.time}</span>
+                        </div>
+                        <p class="text-sm text-slate-100 font-sans">${item.content}</p>
+                    </div>
+                `).join('');
+            }
+
+            function updateAgentCount() {
+                const activeCount = agents.filter(a => a.status === 'running').length;
+                const countEl = document.getElementById('active-agent-count');
+                if (countEl) countEl.innerText = activeCount;
+            }
+
+            function evaluateAllAgents() {
+                agents.forEach(agent => {
+                    if (agent.status !== 'running') return;
+                    window.RTKStreamItems.forEach(item => {
+                        const text = (item.content + " " + item.tags).toLowerCase();
+                        if (text.includes(agent.query)) {
+                            const matchHtml = `
+                                <div class="p-3 bg-slate-900/80 border border-slate-800 rounded shadow space-y-1">
+                                    <div class="flex items-center justify-between text-slate-400 text-[10px]">
+                                        <span class="text-blue-400 font-bold">${item.source}</span>
+                                        <span>${item.time}</span>
+                                    </div>
+                                    <p class="text-xs text-slate-200">${item.content}</p>
+                                </div>
+                            `;
+                            if (!agent.matches.some(m => m.includes(item.content))) {
+                                agent.matches.unshift(matchHtml); // Newest matches on top
+                            }
+                        }
+                    });
+                });
+                renderAgents();
+            }
+
+            // Spawn Button Event Listener
+            const spawnBtn = document.getElementById('spawn-agent-btn');
+            if (spawnBtn) {
+                spawnBtn.addEventListener('click', () => {
+                    const queryInput = document.getElementById('new-agent-query');
+                    const timerSelect = document.getElementById('new-agent-timer');
+                    if (!queryInput) return;
+                    const query = queryInput.value.trim().toLowerCase();
+                    if (!query) return;
+
+                    const durationSecs = parseInt(timerSelect.value);
+                    const agent = {
+                        id: Date.now(),
+                        query: query,
+                        duration: durationSecs,
+                        timeLeft: durationSecs,
+                        status: 'running',
+                        matches: [],
+                        timerInterval: null
+                    };
+
+                    agents.push(agent);
+                    queryInput.value = '';
+                    
+                    evaluateAllAgents();
+                    startAgentTimer(agent);
+                    updateAgentCount();
+                });
+            }
+
+            function startAgentTimer(agent) {
+                if (agent.duration === 0) return; // Continuous
+                agent.timerInterval = setInterval(() => {
+                    if (agent.status === 'running') {
+                        agent.timeLeft--;
+                        if (agent.timeLeft <= 0) {
+                            agent.status = 'expired';
+                            clearInterval(agent.timerInterval);
+                        }
+                        renderAgents();
+                        updateAgentCount();
+                    }
+                }, 1000);
+            }
+
+            window.toggleAgentStatus = function(id) {
+                const agent = agents.find(a => a.id === id);
+                if (!agent || agent.status === 'expired') return;
+                agent.status = agent.status === 'running' ? 'paused' : 'running';
+                renderAgents();
+                updateAgentCount();
+            };
+
+            window.deleteAgent = function(id) {
+                const agent = agents.find(a => a.id === id);
+                if (agent && agent.timerInterval) clearInterval(agent.timerInterval);
+                agents = agents.filter(a => a.id !== id);
+                renderAgents();
+                updateAgentCount();
+            };
+
+            function renderAgents() {
+                const container = document.getElementById('agents-container');
+                if (!container) return;
+
+                if (agents.length === 0) {
+                    container.innerHTML = `<div class="p-6 bg-slate-900/50 border border-slate-800/80 rounded-lg text-center text-slate-500 font-mono text-xs">No active search agents deployed. Configure and launch a sentinel above.</div>`;
+                    return;
+                }
+
+                container.innerHTML = agents.map(a => {
+                    const isRunning = a.status === 'running';
+                    const isPaused = a.status === 'paused';
+                    const isExpired = a.status === 'expired';
+
+                    let ledColor = 'bg-emerald-500 animate-pulse';
+                    let statusText = 'RUNNING';
+                    if (isPaused) { ledColor = 'bg-amber-500'; statusText = 'PAUSED'; }
+                    if (isExpired) { ledColor = 'bg-red-500'; statusText = 'EXPIRED'; }
+
+                    const mins = Math.floor(a.timeLeft / 60);
+                    const secs = a.timeLeft % 60;
+                    const timeStr = a.duration === 0 ? 'Continuous' : `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+
+                    return `
+                        <div class="bg-slate-900 border ${isExpired ? 'border-red-900/50 opacity-70' : 'border-slate-800'} rounded-lg p-4 space-y-3 font-mono text-xs shadow-md">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center space-x-3">
+                                    <div class="w-2.5 h-2.5 rounded-full ${ledColor}"></div>
+                                    <span class="font-bold text-slate-200">Query: <span class="text-blue-400">"${a.query}"</span></span>
+                                    <span class="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-300 border border-slate-700">${statusText}</span>
+                                </div>
+                                <div class="flex items-center space-x-3">
+                                    <span class="text-slate-400">⏱ ${timeStr}</span>
+                                    <span class="px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800/50 font-bold">${a.matches.length} Matches</span>
+                                    ${!isExpired ? `<button onclick="toggleAgentStatus(${a.id})" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded cursor-pointer">${isRunning ? 'Pause' : 'Resume'}</button>` : ''}
+                                    <button onclick="deleteAgent(${a.id})" class="px-2 py-1 bg-red-950/50 hover:bg-red-900 text-red-300 rounded cursor-pointer">Terminate</button>
+                                </div>
+                            </div>
+                            ${a.matches.length > 0 ? `
+                                <div class="space-y-2 pt-2 border-t border-slate-800/80">
+                                    <div class="text-[10px] text-slate-500 uppercase tracking-wider">Live Agent Hits:</div>
+                                    <div class="space-y-2 max-h-48 overflow-y-auto">
+                                        ${a.matches.join('')}
+                                    </div>
+                                </div>
+                            ` : `<div class="text-[11px] text-slate-500 italic pt-1">Scanning stream for matches...</div>`}
+                        </div>
+                    `;
+                }).join('');
+            }
+
+            renderMasterPool();
+            // Background continuous monitoring daemon interval
+            setInterval(evaluateAllAgents, 2000);
+        });
+    </script>
+</body>
+</html>

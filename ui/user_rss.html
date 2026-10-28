@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <title>Mesh RSS Feeds</title>
+    <style>
+        body { margin: 0; background: #020617; color: #f8fafc; font-family: system-ui, sans-serif; height: 100vh; display: flex; overflow: hidden; }
+        aside { width: 380px; background: #0f172a; border-right: 1px solid #1e293b; display: flex; flex-direction: column; padding: 24px; box-shadow: 10px 0 30px rgba(0,0,0,0.8); z-index: 10; }
+        main { flex-grow: 1; display: flex; flex-direction: column; padding: 32px; background: radial-gradient(circle at center, #0f172a 0%, #020617 100%); overflow-y: auto; }
+        h3 { margin: 0 0 8px 0; color: #38bdf8; font-size: 18px; display: flex; align-items: center; gap: 8px; }
+        p { font-size: 12px; color: #94a3b8; margin: 0 0 16px 0; }
+        .form-box { display: flex; flex-direction: column; gap: 12px; background: #0f172a; border: 1px solid #1e293b; padding: 20px; border-radius: 12px; max-width: 600px; margin-bottom: 24px; }
+        input { background: #020617; border: 1px solid #334155; color: #fff; padding: 12px; border-radius: 8px; font-size: 13px; }
+        button { background: #3b82f6; color: #fff; border: none; padding: 12px; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 13px; transition: background 0.2s; }
+        button:hover { background: #2563eb; }
+        .secondary-btn { background: #1e293b; border: 1px solid #334155; color: #38bdf8; padding: 8px; border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; text-align: center; text-decoration: none; display: inline-block; }
+        .secondary-btn:hover { background: #334155; }
+        .back-btn { background: #1e293b; color: #94a3b8; border: 1px solid #334155; margin-bottom: 16px; text-align: center; text-decoration: none; padding: 8px; border-radius: 6px; font-size: 12px; font-weight: 500; display: inline-block; }
+        .back-btn:hover { background: #334155; color: #fff; }
+        #feed-items { display: flex; flex-direction: column; gap: 10px; max-width: 800px; }
+        .feed-card { background: #0f172a; border: 1px solid #1e293b; padding: 16px; border-radius: 8px; transition: opacity 0.2s; }
+        .feed-card.read { opacity: 0.5; border-color: #1e293b; background: #090d16; }
+        .feed-card a { color: #38bdf8; text-decoration: none; font-weight: 600; font-size: 15px; }
+        .feed-card a:hover { text-decoration: underline; }
+        #subscriptions-list { flex-grow: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; padding-right: 4px; max-height: 280px; }
+        .sub-item { background: #020617; border: 1px solid #1e293b; padding: 10px; border-radius: 6px; font-size: 11px; color: #38bdf8; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+        .sub-url { word-break: break-all; cursor: pointer; flex-grow: 1; display: flex; align-items: center; gap: 6px; }
+        .sub-url:hover { color: #60a5fa; }
+        .unsub-btn { background: #7f1d1d; color: #fca5a5; border: none; padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; cursor: pointer; transition: background 0.2s; }
+        .unsub-btn:hover { background: #991b1b; }
+        .opml-bar { display: flex; gap: 8px; margin-bottom: 16px; }
+        #status-led { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #10b981; margin-right: 6px; box-shadow: 0 0 8px #10b981; }
+    </style>
+</head>
+<body>
+    <aside>
+        <a href="/" class="back-btn">&#8592; Back to Dashboard</a>
+        <h3>&#128240; Mesh RSS Feeds</h3>
+        <p>Active subscriptions & OPML sync.</p>
+        
+        <div class="opml-bar">
+            <a href="/api/rss/opml" class="secondary-btn" style="flex:1;">Export OPML</a>
+            <button class="secondary-btn" style="flex:1;" onclick="document.getElementById('opml-file').click()">Import OPML</button>
+            <input type="file" id="opml-file" style="display:none" accept=".opml,.xml" onchange="importOpml(event)">
+        </div>
+
+        <div style="font-size: 13px; font-weight: bold; color: #f8fafc; margin-bottom: 8px;">Subscribed Feeds</div>
+        <div id="subscriptions-list">Loading subscriptions...</div>
+        
+        <div style="margin-top: auto; font-size: 12px; color: #94a3b8; display: flex; align-items: center; border-top: 1px solid #1e293b; padding-top: 12px;">
+            <span id="status-led"></span> Status: <span id="status-text" style="margin-left: 4px; color: #10b981;">Mesh Connected</span>
+        </div>
+    </aside>
+    <main>
+        <div class="form-box">
+            <div style="font-size: 16px; font-weight: bold; color: #f8fafc;">Add RSS / Atom Feed URL</div>
+            <input type="text" id="feed-url" placeholder="https://www.kernel.org/feeds/kdist.xml" value="https://www.kernel.org/feeds/kdist.xml" />
+            <button onclick="subscribeFeed()">Subscribe & Fetch Feed</button>
+        </div>
+        <div style="font-size: 18px; font-weight: bold; margin-bottom: 12px; color: #38bdf8;">Feed Articles</div>
+        <div id="feed-items">Select a subscribed feed or add a new URL to load items.</div>
+    </main>
+    <script>
+        const readArticles = JSON.parse(localStorage.getItem('sov_read_articles') || '{}');
+
+        function getDomain(url) {
+            try { return new URL(url).hostname; } catch(e) { return ''; }
+        }
+
+        async function loadSubscriptions() {
+            try {
+                const res = await fetch('/api/rss/feeds');
+                const feeds = await res.json();
+                const list = document.getElementById('subscriptions-list');
+                list.innerHTML = '';
+                if (feeds.length === 0) {
+                    list.innerHTML = '<div style="color: #64748b; font-size: 11px;">No active feeds.</div>';
+                    return;
+                }
+                feeds.forEach(f => {
+                    const item = document.createElement('div');
+                    item.className = 'sub-item';
+                    
+                    const domain = getDomain(f.url);
+                    const faviconUrl = domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=16` : '';
+
+                    const span = document.createElement('span');
+                    span.className = 'sub-url';
+                    span.innerHTML = `${faviconUrl ? `<img src="${faviconUrl}" width="14" height="14" style="border-radius:2px;">` : '🌐'} ${f.url}`;
+                    span.onclick = () => {
+                        document.getElementById('feed-url').value = f.url;
+                        subscribeFeedForUrl(f.url);
+                    };
+
+                    const btn = document.createElement('button');
+                    btn.className = 'unsub-btn';
+                    btn.textContent = 'Unsub';
+                    btn.onclick = async (e) => {
+                        e.stopPropagation();
+                        await fetch('/api/rss/sub', {
+                            method: 'DELETE',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ url: f.url })
+                        });
+                        loadSubscriptions();
+                    };
+
+                    item.appendChild(span);
+                    item.appendChild(btn);
+                    list.appendChild(item);
+                });
+            } catch(e) {
+                console.error("Failed to load subscriptions", e);
+            }
+        }
+
+        async function subscribeFeedForUrl(url) {
+            const listContainer = document.getElementById('feed-items');
+            listContainer.innerHTML = '<div style="color: #94a3b8;">Fetching feed through mesh proxy...</div>';
+
+            try {
+                const res = await fetch('/api/rss/sub', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url })
+                });
+
+                if (res.ok) {
+                    const data = await res.json();
+                    listContainer.innerHTML = '';
+                    if (data.items && data.items.length > 0) {
+                        data.items.forEach(item => {
+                            const card = document.createElement('div');
+                            const isRead = readArticles[item.link];
+                            card.className = `feed-card ${isRead ? 'read' : ''}`;
+                            card.innerHTML = `
+                                <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                                    <a href="${item.link}" target="_blank" onclick="markAsRead('${item.link}', this)">${item.title}</a>
+                                    <button style="background:none; border:1px solid #334155; color:#94a3b8; font-size:10px; padding:2px 6px; border-radius:4px; cursor:pointer;" onclick="toggleRead('${item.link}', this)">${isRead ? 'Mark Unread' : 'Mark Read'}</button>
+                                </div>
+                                <div style="font-size: 11px; color: #64748b; margin-top: 6px;">📅 ${item.pub_date}</div>
+                            `;
+                            listContainer.appendChild(card);
+                        });
+                    } else {
+                        listContainer.innerHTML = '<div style="color: #94a3b8;">No articles found in feed.</div>';
+                    }
+                    loadSubscriptions();
+                } else {
+                    listContainer.innerHTML = '<div style="color: #ef4444;">Failed to fetch RSS feed. Check URL.</div>';
+                }
+            } catch(e) {
+                listContainer.innerHTML = `<div style="color: #ef4444;">Error: ${e.message}</div>`;
+            }
+        }
+
+        function markAsRead(link, el) {
+            readArticles[link] = true;
+            localStorage.setItem('sov_read_articles', JSON.stringify(readArticles));
+            el.closest('.feed-card').classList.add('read');
+        }
+
+        function toggleRead(link, btnEl) {
+            const card = btnEl.closest('.feed-card');
+            if (readArticles[link]) {
+                delete readArticles[link];
+                card.classList.remove('read');
+                btnEl.textContent = 'Mark Read';
+            } else {
+                readArticles[link] = true;
+                card.classList.add('read');
+                btnEl.textContent = 'Mark Unread';
+            }
+            localStorage.setItem('sov_read_articles', JSON.stringify(readArticles));
+        }
+
+        async function importOpml(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const text = await file.text();
+            try {
+                const res = await fetch('/api/rss/opml', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ opml: text })
+                });
+                if (res.ok) {
+                    alert('OPML feeds imported successfully!');
+                    loadSubscriptions();
+                } else {
+                    alert('Failed to import OPML.');
+                }
+            } catch(e) {
+                alert(`Error importing OPML: ${e.message}`);
+            }
+        }
+
+        function subscribeFeed() {
+            const urlInput = document.getElementById('feed-url');
+            const url = urlInput ? urlInput.value.trim() : '';
+            if (!url) return alert('Please enter a valid feed URL.');
+            subscribeFeedForUrl(url);
+        }
+
+        loadSubscriptions();
+    </script>
+</body>
+</html>
