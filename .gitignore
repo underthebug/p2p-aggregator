@@ -5,6 +5,9 @@ target/
 data/
 scripts/
 
-# Local release artifacts and runtime logs
+# Local release artifacts, runtime logs, and node private keys
 dist/
 http_ui.log
+*.log
+identity.key
+*.key
