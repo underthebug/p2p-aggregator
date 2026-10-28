@@ -1,0 +1,6 @@
+p2p_bind_addr = "127.0.0.1:9001"
+metrics_bind_addr = "127.0.0.1:8001"
+ipc_socket_path = "./data/p2p-node1.sock"
+database_path = "./data/node1.db"
+heartbeat_interval_secs = 1
+bootstrap_nodes = ['127.0.0.1:9002', '127.0.0.1:9003']
