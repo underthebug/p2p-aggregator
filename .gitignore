@@ -4,3 +4,7 @@ data/
 target/
 data/
 scripts/
+
+# Local release artifacts and runtime logs
+dist/
+http_ui.log
