@@ -61,3 +61,27 @@ fn test_tampered_payload_fails_verification() {
     let is_valid = signed_payload.verify_signature().unwrap();
     assert!(!is_valid, "Tampered payload passed signature verification!");
 }
+
+#[test]
+fn test_tampered_signature_fails_verification() {
+    let signing_key = SigningKey::generate(&mut OsRng);
+
+    let payload = AgentPayload {
+        sender_id: "agent_node_alpha".to_string(),
+        timestamp: 1711900800,
+        action: "execute_macro".to_string(),
+        nonce: 42,
+    };
+    let serialized_payload = serde_json::to_string(&payload).unwrap();
+    let mut signature_bytes = signing_key.sign(serialized_payload.as_bytes()).to_bytes();
+    signature_bytes[0] ^= 0x01;
+
+    let signed_payload = SignedPayload {
+        payload,
+        signature: hex::encode(signature_bytes),
+        public_key: hex::encode(signing_key.verifying_key().to_bytes()),
+    };
+
+    let is_valid = signed_payload.verify_signature().unwrap();
+    assert!(!is_valid, "Corrupted signature passed verification!");
+}

@@ -158,6 +158,7 @@ struct DirectMessageRecord {
 
 struct PendingDirectMessage {
     recipient_id: String,
+    dedupe_key: String,
     bytes: Vec<u8>,
     expires_at: Instant,
     attempts: u32,
@@ -320,12 +321,7 @@ async fn post_direct_message(
             Json(serde_json::json!({ "error": "Retries must be between 0 and 10." })),
         );
     }
-    if state.pending_messages.lock().unwrap().len() >= MAX_PENDING_DIRECT_MESSAGES {
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(serde_json::json!({ "error": "The in-memory outbox is full. Wait for delivery or expiry before sending more." })),
-        );
-    }
+    let dedupe_key = direct_message_key(recipient_id, content, payload.reply_to_broadcast.as_deref());
 
     let message_id = new_message_id();
     let timestamp = unix_timestamp();
@@ -351,19 +347,36 @@ async fn post_direct_message(
             );
         }
     };
-    remember_direct_message(&state, record);
-
-    state.pending_messages.lock().unwrap().insert(
-        message_id.clone(),
-        PendingDirectMessage {
-            recipient_id: recipient_id.to_string(),
-            bytes,
-            expires_at: Instant::now() + Duration::from_secs(ttl_seconds),
-            attempts: 0,
-            max_attempts,
-            next_attempt_at: Instant::now(),
-        },
-    );
+    {
+        let mut pending = state.pending_messages.lock().unwrap();
+        let existing = pending
+            .iter()
+            .find(|(_, entry)| entry.dedupe_key == dedupe_key)
+            .map(|(id, _)| id.clone());
+        if let Some(existing_id) = existing {
+            drop(pending);
+            return existing_direct_message_response(&state, &existing_id);
+        }
+        if pending.len() >= MAX_PENDING_DIRECT_MESSAGES {
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(serde_json::json!({ "error": "The in-memory outbox is full. Wait for delivery or expiry before sending more." })),
+            );
+        }
+        remember_direct_message(&state, record);
+        pending.insert(
+            message_id.clone(),
+            PendingDirectMessage {
+                recipient_id: recipient_id.to_string(),
+                dedupe_key,
+                bytes,
+                expires_at: Instant::now() + Duration::from_secs(ttl_seconds),
+                attempts: 0,
+                max_attempts,
+                next_attempt_at: Instant::now(),
+            },
+        );
+    }
     dispatch_pending_direct_messages(&state).await;
 
     let status = state.direct_messages.lock().unwrap().iter()
@@ -412,6 +425,27 @@ fn encode_direct_message(record: &DirectMessageRecord) -> Result<Vec<u8>, serde_
         reply_to_broadcast: record.reply_to_broadcast.clone(),
     };
     serde_json::to_vec(&message)
+}
+
+fn direct_message_key(recipient_id: &str, content: &str, reply_to_broadcast: Option<&str>) -> String {
+    serde_json::to_string(&(recipient_id, content, reply_to_broadcast)).unwrap_or_default()
+}
+
+fn existing_direct_message_response(state: &DaemonState, id: &str) -> (StatusCode, Json<serde_json::Value>) {
+    let (status, expires_at) = state.direct_messages.lock().unwrap().iter()
+        .find(|message| message.id == id)
+        .map(|message| (message.status.clone(), message.expires_at))
+        .unwrap_or_else(|| ("waiting".to_string(), None));
+    let status_code = if status == "sent" { StatusCode::OK } else { StatusCode::ACCEPTED };
+    (
+        status_code,
+        Json(serde_json::json!({
+            "status": status,
+            "id": id,
+            "expires_at": expires_at,
+            "duplicate": true
+        })),
+    )
 }
 
 async fn dispatch_pending_direct_messages(state: &DaemonState) {
@@ -496,6 +530,7 @@ async fn resend_direct_message(
         }
     };
 
+    let dedupe_key = direct_message_key(&record.recipient_id, &record.content, record.reply_to_broadcast.as_deref());
     let now = Instant::now();
     let expires_at = unix_timestamp() + ttl_seconds as i64;
     {
@@ -504,6 +539,12 @@ async fn resend_direct_message(
             return (
                 StatusCode::CONFLICT,
                 Json(serde_json::json!({ "error": "This reply is already queued." })),
+            );
+        }
+        if pending.values().any(|entry| entry.dedupe_key == dedupe_key) {
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({ "error": "An identical reply is already queued." })),
             );
         }
         if pending.len() >= MAX_PENDING_DIRECT_MESSAGES {
@@ -532,6 +573,7 @@ async fn resend_direct_message(
             record.id.clone(),
             PendingDirectMessage {
                 recipient_id: record.recipient_id.clone(),
+                dedupe_key,
                 bytes,
                 expires_at: now + Duration::from_secs(ttl_seconds),
                 attempts: 0,
@@ -1515,6 +1557,27 @@ mod tests {
         assert_eq!(received[0].reply_to_broadcast.as_deref(), Some("broadcast-1"));
         assert_eq!(received[0].content, "hello from test");
         assert_eq!(received[0].status, "received");
+    }
+
+    #[tokio::test]
+    async fn identical_queued_reply_is_not_duplicated() {
+        let socket = Arc::new(UdpSocket::bind(("127.0.0.1", 0)).await.unwrap());
+        let state = test_state("peer-a", socket);
+        let payload = || DirectMessagePayload {
+            recipient_id: "offline-peer".to_string(),
+            content: "same text".to_string(),
+            reply_to_broadcast: None,
+            queue_ttl_seconds: Some(60),
+            max_retries: None,
+        };
+
+        let first = post_direct_message(State(state.clone()), Json(payload())).await.into_response();
+        let second = post_direct_message(State(state.clone()), Json(payload())).await.into_response();
+
+        assert_eq!(first.status(), StatusCode::ACCEPTED);
+        assert_eq!(second.status(), StatusCode::ACCEPTED);
+        assert_eq!(state.pending_messages.lock().unwrap().len(), 1);
+        assert_eq!(state.direct_messages.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]
