@@ -1,4 +1,6 @@
+use p2p_aggregator::journal::sqlite::{ensure_journal_table, is_recorded, record_transaction};
 use rusqlite::{Connection, Result};
+use sha2::{Digest, Sha256};
 
 pub struct StateDatabase {
     conn: Connection,
@@ -39,6 +41,8 @@ impl StateDatabase {
             )",
             [],
         )?;
+
+        ensure_journal_table(&conn)?;
 
         Ok(Self { conn })
     }
@@ -85,5 +89,32 @@ impl StateDatabase {
     pub fn mark_outbox_sent(&mut self, id: i64) -> Result<()> {
         self.conn.execute("UPDATE outbox SET status = 'sent' WHERE id = ?1", [id])?;
         Ok(())
+    }
+
+    pub fn outbox_already_sent(&self, msg_json: &str) -> Result<bool> {
+        is_recorded(&self.conn, &payload_hash(msg_json))
+    }
+
+    pub fn record_outbox_sent(&mut self, msg_json: &str) -> Result<()> {
+        record_transaction(&self.conn, &payload_hash(msg_json), msg_json, "SENT")?;
+        Ok(())
+    }
+}
+
+fn payload_hash(msg_json: &str) -> String {
+    hex::encode(Sha256::digest(msg_json.as_bytes()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StateDatabase;
+
+    #[test]
+    fn outbox_message_is_recorded_once() {
+        let mut db = StateDatabase::new(":memory:").unwrap();
+        let msg = r#"{"FeedCard":{}}"#;
+        assert!(!db.outbox_already_sent(msg).unwrap());
+        db.record_outbox_sent(msg).unwrap();
+        assert!(db.outbox_already_sent(msg).unwrap());
     }
 }

@@ -131,8 +131,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
             if let Ok(pending) = db.get_pending_outbox() {
                 let mut processed_ids = Vec::new();
                 for (id, json_str) in pending {
+                    if db.outbox_already_sent(&json_str).unwrap_or(false) {
+                        processed_ids.push(id);
+                        continue;
+                    }
                     if let Ok(msg) = serde_json::from_str::<SwarmMessage>(&json_str) {
                         if tx_poller.send(msg).await.is_ok() {
+                            let _ = db.record_outbox_sent(&json_str);
                             processed_ids.push(id);
                         }
                     }

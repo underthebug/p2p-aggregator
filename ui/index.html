@@ -3,8 +3,46 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mesh Station - Sovereign Hub</title>
+    <title>Aggregator P2P Web of Trust</title>
     <link rel="stylesheet" href="/tailwind.css">
+    <style>
+    #tag-picker-btn { display: inline-flex; align-items: center; gap: 0.25rem; min-width: 0; max-width: 16rem; white-space: nowrap; overflow: hidden; }
+    #tag-picker-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #tag-list { overflow-x: hidden; }
+    #tag-list > div > button, #tag-panel button { flex: 0 0 auto; }
+    #tag-list input[type="checkbox"] { flex: 0 0 auto; }
+    #tag-list .tag-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sidebar-peer-list { display: grid; gap: 0.2rem; padding-left: 1.1rem; font: 0.6rem ui-monospace, monospace; color: #64748b; }
+    .sidebar-peer-row { position: relative; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sidebar-peer-row::before { content: ''; position: absolute; left: -0.8rem; top: 0.3rem; width: 0.3rem; height: 0.3rem; border-radius: 50%; background: #34d399; }
+    .sidebar-peer-empty { color: #475569; }
+    #app-shell.sidebar-collapsed #sidebar-peer-list { display: none !important; }
+    .ui-scale-control { position: fixed; right: 12px; bottom: 12px; z-index: 50; display: flex; align-items: center; gap: 6px; padding: 4px 6px; border: 1px solid #334155; border-radius: 8px; background: rgb(15 23 42 / 0.92); color: #cbd5e1; font: 12px ui-sans-serif, system-ui, sans-serif; }
+    .ui-scale-control button { width: 24px; height: 24px; border-radius: 6px; background: #1e293b; color: #e2e8f0; cursor: pointer; }
+    .ui-scale-control button:hover { background: #334155; }
+    #ui-scale-value { min-width: 40px; text-align: center; font-variant-numeric: tabular-nums; }
+    .info-stack { display: grid; gap: 1rem; max-width: 48rem; }
+    .info-header { padding-bottom: 1rem; border-bottom: 1px solid #1e293b; }
+    .info-header h2 { margin: 0; font-size: 1.25rem; font-weight: 700; color: #f1f5f9; }
+    .info-header p { margin: 0.25rem 0 0; font: 0.75rem ui-monospace, monospace; color: #94a3b8; }
+    .info-panel { display: grid; gap: 0.6rem; padding: 1rem; background: #0f172a; border: 1px solid #1e293b; border-radius: 0.75rem; }
+    .info-panel h3 { margin: 0; font: 700 0.85rem ui-monospace, monospace; color: #e2e8f0; }
+    .info-panel p { margin: 0; font-size: 0.8rem; line-height: 1.5; color: #94a3b8; }
+    .info-panel ul { margin: 0; padding-left: 1.1rem; display: grid; gap: 0.35rem; font-size: 0.8rem; line-height: 1.5; color: #94a3b8; }
+    .info-panel strong { color: #e2e8f0; font-weight: 600; }
+    .info-row { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; font-size: 0.8rem; color: #94a3b8; }
+    .info-mono { font: 0.7rem ui-monospace, monospace; color: #cbd5e1; word-break: break-all; text-align: right; }
+    .info-btn { display: inline-block; padding: 0.4rem 0.9rem; border: 0; border-radius: 0.5rem; font: 600 0.75rem ui-monospace, monospace; color: #fff; text-decoration: none; cursor: pointer; }
+    .info-btn-blue { background: #2563eb; }
+    .info-btn-blue:hover { background: #3b82f6; }
+    .info-btn-amber { background: #d97706; }
+    .info-btn-amber:hover { background: #f59e0b; }
+    .info-btn-ghost { background: #1e293b; }
+    .info-btn-ghost:hover { background: #334155; }
+    @media (max-width: 720px) {
+        body > .h-screen > aside nav { flex-wrap: wrap !important; overflow-x: visible !important; }
+    }
+    </style>
     <script>
     document.addEventListener('DOMContentLoaded', () => {
         const rssIngestBtn = document.getElementById('rss-ingest-btn');
@@ -15,9 +53,7 @@
                 document.getElementById('rss-url-input').value = feed_url;
 
                 const region = document.getElementById('rss-target-region').value;
-                const activeTags = Array.from(document.querySelectorAll('.tag-pill'))
-                    .filter(b => b.classList.contains('bg-amber-600'))
-                    .map(b => b.getAttribute('data-tag'));
+                const activeTags = tagLibrary.filter(t => selectedTags.has(t));
 
                 rssIngestBtn.innerText = "Fetching...";
 
@@ -54,7 +90,7 @@
                 <div class="sidebar-heading">
                     <div class="sidebar-brand">
                         <span class="w-3 h-3 rounded-full bg-emerald-500 animate-pulse" aria-hidden="true"></span>
-                        <h1 class="sidebar-brand-title font-bold text-lg text-slate-100 tracking-wide">Mesh Station</h1>
+                        <h1 class="sidebar-brand-title font-bold text-lg text-emerald-400 tracking-wide">Aggregator P2P Web of Trust</h1>
                     </div>
                     <button id="sidebar-collapse-btn" type="button" class="sidebar-collapse-btn" aria-label="Collapse sidebar" aria-expanded="true" title="Collapse sidebar">
                         <span id="sidebar-collapse-icon" aria-hidden="true">‹</span>
@@ -63,9 +99,6 @@
                 <nav class="space-y-1">
                     <button data-tab="tab-comms" title="Mesh Comms" class="nav-tab-btn w-full text-left flex items-center space-x-3 px-3 py-2 rounded-lg bg-blue-600/20 text-blue-400 font-medium text-sm cursor-pointer">
                         <span class="nav-icon" aria-hidden="true">📡</span><span class="nav-label">Mesh Comms</span>
-                    </button>
-                    <button id="open-peers-btn" title="Node Topology" class="w-full text-left flex items-center space-x-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 text-sm cursor-pointer">
-                        <span class="nav-icon" aria-hidden="true">🌐</span><span class="nav-label">Node Topology</span>
                     </button>
                     <button data-tab="tab-dm" title="Direct Replies" class="nav-tab-btn w-full text-left flex items-center space-x-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 text-sm cursor-pointer">
                         <span class="nav-icon" aria-hidden="true">✉</span><span class="nav-label">Direct Replies</span><span id="dm-unread-count" class="nav-badge">0</span>
@@ -76,8 +109,23 @@
                     <button data-tab="tab-rss" title="RSS Ingestion" class="nav-tab-btn w-full text-left flex items-center space-x-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 text-sm cursor-pointer">
                         <span class="nav-icon" aria-hidden="true">📰</span><span class="nav-label">RSS Ingestion</span>
                     </button>
+                    <button data-tab="tab-monitor" title="Feed Monitor" class="nav-tab-btn w-full text-left flex items-center space-x-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 text-sm cursor-pointer">
+                        <span class="nav-icon" aria-hidden="true">🔎</span><span class="nav-label">Feed Monitor</span>
+                    </button>
                     <button data-tab="tab-saved" title="Saved Cards" class="nav-tab-btn w-full text-left flex items-center space-x-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 text-sm cursor-pointer">
                         <span class="nav-icon" aria-hidden="true">🔖</span><span class="nav-label">Saved Cards</span><span id="sidebar-saved-count" class="nav-badge">0</span>
+                    </button>
+                    <button data-tab="tab-apps" title="Apps" class="nav-tab-btn w-full text-left flex items-center space-x-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 text-sm cursor-pointer">
+                        <span class="nav-icon" aria-hidden="true">🧩</span><span class="nav-label">Apps</span>
+                    </button>
+                    <button data-tab="tab-help" title="Help" class="nav-tab-btn w-full text-left flex items-center space-x-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 text-sm cursor-pointer">
+                        <span class="nav-icon" aria-hidden="true">❔</span><span class="nav-label">Help</span>
+                    </button>
+                    <button data-tab="tab-support" title="Support" class="nav-tab-btn w-full text-left flex items-center space-x-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 text-sm cursor-pointer">
+                        <span class="nav-icon" aria-hidden="true">☕</span><span class="nav-label">Support</span>
+                    </button>
+                    <button data-tab="tab-about" title="About" class="nav-tab-btn w-full text-left flex items-center space-x-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 text-sm cursor-pointer">
+                        <span class="nav-icon" aria-hidden="true">ℹ</span><span class="nav-label">About</span>
                     </button>
                 </nav>
                 <div class="sidebar-activity" aria-label="Network activity">
@@ -85,6 +133,7 @@
                         <span id="peer-activity-light" class="activity-light" aria-hidden="true"></span>
                         <span class="activity-label">Peers <span id="peer-activity-count">0</span></span>
                     </div>
+                    <div id="sidebar-peer-list" class="sidebar-peer-list"></div>
                     <div class="activity-row" title="Replies waiting to send">
                         <span id="outbox-activity-light" class="activity-light" aria-hidden="true"></span>
                         <span class="activity-label">Outbox <span id="outbox-activity-count">0</span></span>
@@ -237,7 +286,19 @@
                                 <option value="86400">24 hours</option>
                             </select>
                         </label>
-                        <p class="text-[10px] font-mono text-slate-500">Unsent replies stay in memory only. Keep this app running; expired replies are discarded.</p>
+                        <label class="flex flex-wrap items-center gap-2 text-xs font-mono text-slate-400" for="dm-retries">
+                            Resend if not confirmed
+                            <select id="dm-retries" class="bg-slate-950 border border-slate-800 rounded p-1.5 text-slate-200">
+                                <option value="0">Never</option>
+                                <option value="1">1 time</option>
+                                <option value="2">2 times</option>
+                                <option value="3" selected>3 times</option>
+                                <option value="5">5 times</option>
+                                <option value="10">10 times</option>
+                            </select>
+                            <span class="text-slate-500">every 15 seconds</span>
+                        </label>
+                        <p class="text-[10px] font-mono text-slate-500">Replies stay in memory only. Keep this app running; failed or expired replies can be resent from the list below.</p>
                         <div class="flex flex-wrap items-center justify-between gap-2">
                             <span id="dm-send-status" class="text-xs font-mono text-slate-400" role="status"></span>
                             <button id="send-dm-btn" class="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-mono text-xs rounded cursor-pointer">Send reply</button>
@@ -337,12 +398,15 @@
                                         <option value="#pottstown">#pottstown</option>
                                     </select>
                                     
-                                    <!-- Multi-Tag Pill Container -->
-                                    <div id="tag-pills-container" class="flex flex-wrap gap-1.5 items-center">
-                                        <button type="button" onclick="toggleTag(this)" data-tag="rss" class="tag-pill px-2 py-1 bg-amber-600 text-white text-[11px] font-mono rounded cursor-pointer transition">#rss</button>
-                                        <button type="button" onclick="toggleTag(this)" data-tag="news" class="tag-pill px-2 py-1 bg-slate-800 text-slate-400 text-[11px] font-mono rounded cursor-pointer transition">#news</button>
-                                        <button type="button" onclick="toggleTag(this)" data-tag="linux" class="tag-pill px-2 py-1 bg-slate-800 text-slate-400 text-[11px] font-mono rounded cursor-pointer transition">#linux</button>
-                                        <button type="button" onclick="addCustomTagPrompt()" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-blue-400 text-[11px] font-mono rounded cursor-pointer">+ Add Tag</button>
+                                    <div id="tag-picker" class="relative">
+                                        <button type="button" id="tag-picker-btn" onclick="toggleTagPanel()" class="px-2.5 py-1.5 bg-slate-950 border border-slate-800 hover:border-slate-600 rounded text-xs font-mono text-slate-300 cursor-pointer">Tags: <span id="tag-picker-summary"></span></button>
+                                        <div id="tag-panel" class="hidden absolute z-20 mt-1 w-64 bg-slate-900 border border-slate-700 rounded-lg shadow-xl p-2 space-y-2">
+                                            <div id="tag-list" class="max-h-48 overflow-y-auto space-y-0.5"></div>
+                                            <div class="flex gap-1.5 pt-2 border-t border-slate-800">
+                                                <input id="tag-new-input" type="text" maxlength="24" placeholder="new tag" class="flex-1 min-w-0 bg-slate-950 border border-slate-800 rounded px-2 py-1 text-[11px] font-mono text-slate-200 focus:outline-none focus:border-blue-600">
+                                                <button type="button" onclick="addTagFromInput()" class="px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-mono rounded cursor-pointer">Add</button>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                                 <button id="rss-ingest-btn" class="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-mono text-xs rounded cursor-pointer">Fetch & Ingest Feed</button>
@@ -351,31 +415,184 @@
                     </div>
                 </div>
 
+                <div id="tab-monitor" class="tab-content hidden space-y-6">
+                    <div class="pb-4 border-b border-slate-800 flex justify-between items-end">
+                        <div>
+                            <h2 class="text-xl font-bold text-slate-100">Feed Monitor</h2>
+                            <p class="text-xs text-slate-400 font-mono">Checks RSS/Atom feeds and mesh traffic every 5 minutes for your keywords and sender IDs.</p>
+                        </div>
+                        <span id="monitor-status" class="text-[11px] font-mono text-slate-500"></span>
+                    </div>
+
+                    <div class="p-4 bg-slate-900 border border-slate-800 rounded-lg space-y-4">
+                        <h3 class="text-sm font-mono font-bold text-slate-200">Watch Rules</h3>
+                        <div class="space-y-1">
+                            <label for="monitor-feeds" class="text-[11px] font-mono text-slate-400">Feed URLs (one per line)</label>
+                            <textarea id="monitor-feeds" rows="3" placeholder="https://www.kernel.org/feeds/kdist.xml" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-blue-600"></textarea>
+                        </div>
+                        <div class="space-y-1">
+                            <label for="monitor-keywords" class="text-[11px] font-mono text-slate-400">Keywords (one per line or comma separated, case-insensitive)</label>
+                            <textarea id="monitor-keywords" rows="3" placeholder="rust, security, cve" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-blue-600"></textarea>
+                        </div>
+                        <div class="space-y-1">
+                            <label for="monitor-senders" class="text-[11px] font-mono text-slate-400">Sender IDs (one per line, exact DID match)</label>
+                            <textarea id="monitor-senders" rows="3" placeholder="did:p2p:..." class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-blue-600"></textarea>
+                        </div>
+                        <div class="flex justify-end">
+                            <button id="monitor-save-btn" class="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-mono text-xs rounded cursor-pointer">Save Rules</button>
+                        </div>
+                    </div>
+
+                    <div class="p-4 bg-slate-900 border border-slate-800 rounded-lg space-y-3">
+                        <div class="flex justify-between items-center">
+                            <h3 class="text-sm font-mono font-bold text-slate-200">Alerts</h3>
+                            <div class="flex gap-2">
+                                <button id="monitor-refresh-btn" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 font-mono text-[11px] rounded cursor-pointer">Refresh</button>
+                                <button id="monitor-clear-btn" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 font-mono text-[11px] rounded cursor-pointer">Clear alerts</button>
+                            </div>
+                        </div>
+                        <div id="monitor-alerts" class="space-y-2 max-h-[60vh] overflow-y-auto"></div>
+                    </div>
+                </div>
+
+                <div id="tab-apps" class="tab-content hidden info-stack">
+                    <div class="info-header">
+                        <h2>Apps</h2>
+                        <p>Open installed apps on this machine. The app must be installed first.</p>
+                    </div>
+                    <div class="info-panel">
+                        <div class="info-row">
+                            <div><h3>qBittorrent</h3><p>BitTorrent client</p></div>
+                            <button type="button" class="info-btn info-btn-blue" onclick="launchApp('qbittorrent')">Open</button>
+                        </div>
+                        <div class="info-row">
+                            <div><h3>VLC</h3><p>Media player</p></div>
+                            <button type="button" class="info-btn info-btn-blue" onclick="launchApp('vlc')">Open</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="tab-help" class="tab-content hidden info-stack">
+                    <div class="info-header">
+                        <h2>Help</h2>
+                        <p>How to use Mesh Station on this machine.</p>
+                    </div>
+                    <div class="info-panel">
+                        <h3>Sections</h3>
+                        <ul>
+                            <li><strong>Mesh Comms</strong>: broadcasts from peers on your network. Reply or save from here.</li>
+                            <li><strong>Direct Replies</strong>: private replies sent to you. The badge shows unread count.</li>
+                            <li><strong>Local AI Pipeline</strong>: summarize content with local models.</li>
+                            <li><strong>RSS Ingestion</strong>: pull in RSS and Atom feeds with tags.</li>
+                            <li><strong>Feed Monitor</strong>: checks feeds and mesh traffic every 5 minutes for your keywords and sender IDs. Matches appear under Alerts.</li>
+                            <li><strong>Saved Cards</strong>: bookmarks kept on this device.</li>
+                            <li><strong>Apps</strong>: open qBittorrent or VLC on this machine.</li>
+                        </ul>
+                    </div>
+                    <div class="info-panel">
+                        <h3>Layout</h3>
+                        <ul>
+                            <li>Collapse the sidebar with the arrow button at the top of it.</li>
+                            <li>Change text size with the minus and plus buttons in the bottom-right corner. The setting is remembered.</li>
+                            <li>Peers and Outbox counts in the sidebar show live network activity.</li>
+                        </ul>
+                    </div>
+                    <div class="info-panel">
+                        <h3>Session ID</h3>
+                        <p>Your identity on the mesh. It changes each time the app restarts.</p>
+                    </div>
+                    <div class="info-panel">
+                        <h3>Troubleshooting</h3>
+                        <ul>
+                            <li>Session ID shows Unavailable: the background daemon is not running. Restart Mesh Station.</li>
+                            <li>No peers: check that the machines are on the same network and that UDP ports starting at 41873 are open.</li>
+                            <li>An app will not open: install it first. Apps can only be opened from the machine running Mesh Station.</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div id="tab-support" class="tab-content hidden info-stack">
+                    <div class="info-header">
+                        <h2>Support Mesh Station</h2>
+                        <p>Donations are optional. Thank you for using it.</p>
+                    </div>
+                    <div class="info-panel">
+                        <h3>Donation addresses</h3>
+                        <p>Send each coin only on the network shown. Other networks may lose funds.</p>
+                        <div class="info-row"><span>Bitcoin (BTC), Bitcoin network</span><span class="info-mono">36vToMpNGxWtd818YwjZpVEi9kkEhBjywQ</span><button type="button" class="info-btn info-btn-ghost" onclick="copyAddress('36vToMpNGxWtd818YwjZpVEi9kkEhBjywQ', 'BTC address')">Copy</button></div>
+                        <div class="info-row"><span>Dogecoin (DOGE), Dogecoin network</span><span class="info-mono">DMaUA3qt86Bex8cJqnrb6hBkSQBaJmcS2v</span><button type="button" class="info-btn info-btn-ghost" onclick="copyAddress('DMaUA3qt86Bex8cJqnrb6hBkSQBaJmcS2v', 'DOGE address')">Copy</button></div>
+                        <div class="info-row"><span>XRP, XRP Ledger (XRPL)</span><span class="info-mono">rw2ciyaNshpHe7bCHo4bRWq6pqqynnWKQg</span><button type="button" class="info-btn info-btn-ghost" onclick="copyAddress('rw2ciyaNshpHe7bCHo4bRWq6pqqynnWKQg', 'XRP address')">Copy</button></div>
+                        <div class="info-row"><span>XRP MEMO (required)</span><span class="info-mono">3246674457</span><button type="button" class="info-btn info-btn-ghost" onclick="copyAddress('3246674457', 'XRP memo')">Copy</button></div>
+                        <div class="info-row"><span>USDC, Ethereum network</span><span class="info-mono">0x321661b674B9d312Bd0D14355e72E74CdDE6363E</span><button type="button" class="info-btn info-btn-ghost" onclick="copyAddress('0x321661b674B9d312Bd0D14355e72E74CdDE6363E', 'USDC address')">Copy</button></div>
+                    </div>
+                </div>
+
+                <div id="tab-about" class="tab-content hidden info-stack">
+                    <div class="info-header">
+                        <h2>About Mesh Station</h2>
+                        <p>Sovereign peer-to-peer mesh hub</p>
+                    </div>
+                    <div class="info-panel">
+                        <div class="info-row"><span>Version</span><span class="info-mono">0.1.0</span></div>
+                        <div class="info-row"><span>Session ID</span><span id="about-session" class="info-mono">Loading...</span></div>
+                        <div class="info-row"><span>Transport</span><span class="info-mono">LAN UDP</span></div>
+                    </div>
+                    <div class="info-panel">
+                        <h3>Thank you</h3>
+                        <p>Built with help from these tools and projects:</p>
+                        <ul>
+                            <li><strong>Visual Studio Code</strong>, the editor it was written in</li>
+                            <li><strong>GitHub Copilot</strong>, AI pair programming</li>
+                            <li><strong>Anthropic Claude</strong>, AI coding and design help</li>
+                            <li><strong>Google Gemini</strong>, AI coding and design help</li>
+                            <li><strong>Rust</strong>, with Tokio and Axum</li>
+                            <li><strong>Tauri</strong>, the desktop shell</li>
+                            <li><strong>Tailwind CSS</strong>, utility class ideas</li>
+                            <li>Linux and the open-source community</li>
+                        </ul>
+                    </div>
+                </div>
+
             </div>
         </main>
     </div>
 
-    <!-- Node Topology Modal -->
-    <div id="peers-modal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm hidden flex items-center justify-center z-50">
-        <div class="bg-slate-900 border border-slate-800 rounded-lg p-6 w-full max-w-lg shadow-2xl space-y-4">
-            <div class="flex justify-between items-center border-b border-slate-800 pb-3">
-                <h3 class="text-sm font-mono font-bold text-slate-200">Active Peer Topology</h3>
-                <button id="close-peers-btn" class="text-slate-400 hover:text-slate-200 font-mono text-xs cursor-pointer">✕</button>
-            </div>
-            <div id="peers-list" class="space-y-2 font-mono text-xs">
-                <div class="text-slate-500">Querying peer list...</div>
-            </div>
-        </div>
-    </div>
-
     <script>
+        const isDesktopShell = location.protocol === 'tauri:' || location.hostname === 'tauri.localhost';
+        let apiBase = '';
+        const nativeFetch = window.fetch.bind(window);
+        const apiReady = (async () => {
+            if (!isDesktopShell) return;
+            for (let port = 41872; port <= 41891; port++) {
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), 500);
+                try {
+                    const res = await nativeFetch(`http://127.0.0.1:${port}/api/identity`, { signal: controller.signal });
+                    if (res.ok) { apiBase = `http://127.0.0.1:${port}`; return; }
+                } catch (e) {
+                    // Port not serving the daemon; try the next one.
+                } finally {
+                    clearTimeout(timer);
+                }
+            }
+        })();
+        window.fetch = async (input, init) => {
+            if (typeof input === 'string' && input.startsWith('/api/')) {
+                await apiReady;
+                input = apiBase + input;
+            }
+            return nativeFetch(input, init);
+        };
+
         let allBroadcasts = [];
+        const aiSummaries = new Map();
         let availableModels = [];
         let activeRegion = '#global';
-        let selectedModel = 'gemma3:4b';
+        let selectedModel = 'llama3.1:8b';
         let savedCardIds = JSON.parse(localStorage.getItem('mesh_saved_cards') || '[]');
         let localPeerId = '';
         let livePeerIds = new Set();
+        let livePeers = [];
         let sidebarCollapsed = localStorage.getItem('mesh_sidebar_collapsed') === 'true';
         const LOCAL_CONTACTS_KEY = 'mesh_local_contact_names';
         const MAX_BROADCAST_BYTES = 3000;
@@ -499,7 +716,7 @@
         function updateActivityLights() {
             const shell = document.getElementById('app-shell');
             const peerCount = livePeerIds.size;
-            const queuedCount = directMessages.filter(message => message.status === 'waiting').length;
+            const queuedCount = directMessages.filter(message => ['waiting', 'sent'].includes(message.status)).length;
             const peerCountLabel = document.getElementById('peer-activity-count');
             const outboxCountLabel = document.getElementById('outbox-activity-count');
             if (peerCountLabel) peerCountLabel.innerText = peerCount;
@@ -564,6 +781,52 @@
             }
         }
 
+        const APP_LABELS = { qbittorrent: 'qBittorrent', vlc: 'VLC' };
+
+        async function launchApp(app) {
+            const label = APP_LABELS[app] || app;
+            try {
+                const res = await fetch('/api/apps/launch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ app })
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+                showToast(`${label} opened`);
+            } catch (err) {
+                showToast(`Could not open ${label}: ${err.message}`);
+            }
+        }
+
+        function copyAddress(value, label) {
+            const field = document.createElement('textarea');
+            field.value = value;
+            field.style.position = 'fixed';
+            field.style.left = '-999999px';
+            document.body.appendChild(field);
+            field.select();
+            try {
+                document.execCommand('copy');
+                showToast(`${label} copied`);
+            } catch (err) {
+                prompt(`Copy this ${label}:`, value);
+            }
+            document.body.removeChild(field);
+        }
+
+        async function loadAbout() {
+            const el = document.getElementById('about-session');
+            try {
+                const res = await fetch('/api/identity');
+                if (!res.ok) throw new Error(res.status);
+                const data = await res.json();
+                el.innerText = data.peer_id;
+            } catch (err) {
+                el.innerText = 'Unavailable';
+            }
+        }
+
         function switchView() {
             document.querySelector('.nav-tab-btn[data-tab="tab-saved"]')?.click();
         }
@@ -584,27 +847,140 @@
             document.body.removeChild(textArea);
         }
 
-        function toggleTag(btn) {
-            btn.classList.toggle('bg-amber-600');
-            btn.classList.toggle('text-white');
-            btn.classList.toggle('bg-slate-800');
-            btn.classList.toggle('text-slate-400');
+        const TAG_LIBRARY_KEY = 'rss_tag_library';
+        const TAG_SELECTED_KEY = 'rss_selected_tags';
+
+        function normalizeTag(value) {
+            return String(value || '').trim().toLowerCase().replace(/[^a-z0-9-_]/g, '').slice(0, 24);
         }
 
-        function addCustomTagPrompt() {
-            const tagName = prompt('Enter custom tag name (e.g. hardware, crypto):');
-            if (tagName && tagName.trim()) {
-                const clean = tagName.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '');
-                const container = document.getElementById('tag-pills-container');
-                const btn = document.createElement('button');
-                btn.type = 'button';
-                btn.className = 'tag-pill px-2 py-1 bg-amber-600 text-white text-[11px] font-mono rounded cursor-pointer transition';
-                btn.setAttribute('data-tag', clean);
-                btn.innerText = `#${clean}`;
-                btn.onclick = function() { toggleTag(this); };
-                container.insertBefore(btn, container.lastElementChild);
-            }
+        function loadTagStore(key, fallback) {
+            try {
+                const parsed = JSON.parse(localStorage.getItem(key));
+                if (Array.isArray(parsed)) return parsed.map(normalizeTag).filter(Boolean);
+            } catch (err) {}
+            return fallback;
         }
+
+        let tagLibrary = [...new Set(loadTagStore(TAG_LIBRARY_KEY, ['rss', 'news', 'linux']))];
+        let selectedTags = new Set(loadTagStore(TAG_SELECTED_KEY, ['rss']).filter(t => tagLibrary.includes(t)));
+
+        function saveTagStore() {
+            localStorage.setItem(TAG_LIBRARY_KEY, JSON.stringify(tagLibrary));
+            localStorage.setItem(TAG_SELECTED_KEY, JSON.stringify([...selectedTags]));
+            renderTagPicker();
+        }
+
+        function tagIconButton(text, title, onClick) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.textContent = text;
+            btn.title = title;
+            btn.className = 'px-1.5 text-slate-500 hover:text-slate-200 text-xs cursor-pointer';
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                onClick();
+            });
+            return btn;
+        }
+
+        function renderTagPicker() {
+            const summary = document.getElementById('tag-picker-summary');
+            if (!summary) return;
+            const chosen = tagLibrary.filter(t => selectedTags.has(t));
+            const all = chosen.map(t => `#${t}`).join(' ');
+            const shown = chosen.slice(0, 3).map(t => `#${t}`).join(' ');
+            summary.textContent = chosen.length > 3 ? `${shown} +${chosen.length - 3}` : (all || 'none');
+            document.getElementById('tag-picker-btn').title = all;
+
+            const list = document.getElementById('tag-list');
+            list.replaceChildren();
+            if (!tagLibrary.length) {
+                const empty = document.createElement('div');
+                empty.className = 'px-1 py-2 text-[11px] font-mono text-slate-500';
+                empty.textContent = 'No tags yet. Add one below.';
+                list.appendChild(empty);
+                return;
+            }
+            tagLibrary.forEach(tag => {
+                const row = document.createElement('div');
+                row.className = 'flex items-center gap-2 px-1 py-0.5 rounded hover:bg-slate-800';
+
+                const label = document.createElement('label');
+                label.className = 'flex items-center gap-2 flex-1 min-w-0 cursor-pointer text-[11px] font-mono text-slate-200';
+                const box = document.createElement('input');
+                box.type = 'checkbox';
+                box.checked = selectedTags.has(tag);
+                box.addEventListener('change', () => {
+                    if (box.checked) {
+                        selectedTags.add(tag);
+                    } else {
+                        selectedTags.delete(tag);
+                    }
+                    saveTagStore();
+                });
+                const name = document.createElement('span');
+                name.className = 'tag-name';
+                name.title = `#${tag}`;
+                name.textContent = `#${tag}`;
+                label.append(box, name);
+
+                row.append(
+                    label,
+                    tagIconButton('\u270E', 'Rename tag', () => renameTag(tag)),
+                    tagIconButton('\u00D7', 'Remove tag', () => removeTag(tag))
+                );
+                list.appendChild(row);
+            });
+        }
+
+        function renameTag(oldTag) {
+            const next = normalizeTag(prompt('Rename tag', oldTag));
+            if (!next || next === oldTag) return;
+            if (tagLibrary.includes(next)) {
+                showToast(`#${next} already exists`);
+                return;
+            }
+            tagLibrary = tagLibrary.map(t => (t === oldTag ? next : t));
+            if (selectedTags.delete(oldTag)) selectedTags.add(next);
+            saveTagStore();
+        }
+
+        function removeTag(tag) {
+            tagLibrary = tagLibrary.filter(t => t !== tag);
+            selectedTags.delete(tag);
+            saveTagStore();
+        }
+
+        function addTagFromInput() {
+            const input = document.getElementById('tag-new-input');
+            const tag = normalizeTag(input.value);
+            input.value = '';
+            if (!tag) return;
+            if (!tagLibrary.includes(tag)) tagLibrary.push(tag);
+            selectedTags.add(tag);
+            saveTagStore();
+        }
+
+        function toggleTagPanel(forceOpen) {
+            const panel = document.getElementById('tag-panel');
+            const open = forceOpen ?? panel.classList.contains('hidden');
+            panel.classList.toggle('hidden', !open);
+        }
+
+        document.getElementById('tag-new-input').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                addTagFromInput();
+            }
+        });
+
+        document.addEventListener('click', (e) => {
+            const picker = document.getElementById('tag-picker');
+            if (picker && !e.composedPath().includes(picker)) toggleTagPanel(false);
+        });
+
+        renderTagPicker();
 
         function setActiveModel(modelName) {
             selectedModel = modelName;
@@ -660,6 +1036,7 @@
                 });
                 const data = await res.json();
                 if (data.status === 'ok' && summaryBox) {
+                    aiSummaries.set(String(id), data.summary);
                     summaryBox.classList.remove('hidden');
                     summaryBox.innerText = `🤖 ${data.summary}`;
                     if (btn) btn.innerText = "⚡ Refreshed Summary";
@@ -690,10 +1067,10 @@
                     if (sel1) sel1.innerHTML = optionsHtml;
                     if (sel2) sel2.innerHTML = optionsHtml;
 
-                    const preferredModels = ['gemma3:4b', 'llama3.2:1b'];
+                    const preferredModels = ['llama3.1:8b', 'gemma3:4b', 'llama3.2:1b'];
                     selectedModel = preferredModels.find(name => availableModels.some(model => model.name === name))
                         || availableModels[0]?.name
-                        || 'llama3.2:1b';
+                        || 'llama3.1:8b';
 
                     if (sel1) sel1.value = selectedModel;
                     if (sel2) sel2.value = selectedModel;
@@ -724,6 +1101,7 @@
         }
 
         let directMessages = [];
+        let lastDmSnapshot = null;
 
         async function loadIdentity() {
             try {
@@ -742,14 +1120,42 @@
             try {
                 const res = await fetch('/api/peers');
                 if (!res.ok) throw new Error(`Peer request failed (${res.status})`);
-                const peers = await res.json();
-                livePeerIds = new Set(peers.map(peer => peer.did));
+                livePeers = await res.json();
+                livePeerIds = new Set(livePeers.map(peer => peer.did));
             } catch (e) {
+                livePeers = [];
                 livePeerIds = new Set();
                 console.warn('Could not load live peers:', e);
             }
+            renderSidebarPeers();
             updateActivityLights();
             renderBroadcasts();
+        }
+
+        function renderSidebarPeers() {
+            const list = document.getElementById('sidebar-peer-list');
+            if (!list) return;
+            list.replaceChildren();
+            if (!livePeers.length) {
+                const empty = document.createElement('div');
+                empty.className = 'sidebar-peer-empty';
+                empty.textContent = 'No peers seen recently';
+                list.appendChild(empty);
+                return;
+            }
+            livePeers.slice(0, 5).forEach(peer => {
+                const row = document.createElement('div');
+                row.className = 'sidebar-peer-row';
+                row.title = peer.did;
+                row.textContent = `${peer.did.slice(0, 6)}...${peer.did.slice(-4)}`;
+                list.appendChild(row);
+            });
+            if (livePeers.length > 5) {
+                const more = document.createElement('div');
+                more.className = 'sidebar-peer-empty';
+                more.textContent = `+${livePeers.length - 5} more`;
+                list.appendChild(more);
+            }
         }
 
         function replyToBroadcast(peerId, broadcastId) {
@@ -764,8 +1170,12 @@
                 const res = await fetch('/api/dm');
                 if (!res.ok) throw new Error(`Inbox request failed (${res.status})`);
                 const data = await res.json();
-                directMessages = Array.isArray(data) ? data : (data.messages || []);
+                const nextMessages = Array.isArray(data) ? data : (data.messages || []);
                 updateActivityLights();
+                const snapshot = JSON.stringify(nextMessages);
+                if (snapshot === lastDmSnapshot) return;
+                lastDmSnapshot = snapshot;
+                directMessages = nextMessages;
                 renderDirectMessages();
             } catch (e) {
                 console.warn('Could not load direct messages:', e);
@@ -777,6 +1187,7 @@
             const content = document.getElementById('dm-input').value.trim();
             const replyToBroadcast = document.getElementById('dm-reply-to-input').value.trim();
             const queueTtlSeconds = Number(document.getElementById('dm-queue-ttl').value);
+            const maxRetries = Number(document.getElementById('dm-retries').value);
             const status = document.getElementById('dm-send-status');
 
             if (!recipientId || !content) {
@@ -792,7 +1203,7 @@
                 const res = await fetch('/api/dm', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ recipient_id: recipientId, content, reply_to_broadcast: replyToBroadcast || null, queue_ttl_seconds: queueTtlSeconds })
+                    body: JSON.stringify({ recipient_id: recipientId, content, reply_to_broadcast: replyToBroadcast || null, queue_ttl_seconds: queueTtlSeconds, max_retries: maxRetries })
                 });
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error || `Send failed (${res.status})`);
@@ -801,12 +1212,41 @@
                 document.getElementById('dm-reply-to-input').value = '';
                 status.innerText = data.status === 'waiting'
                     ? `Waiting for recipient until ${new Date(data.expires_at * 1000).toLocaleString()}.`
-                    : 'Sent. Waiting for the peer to acknowledge receipt.';
+                    : `Sent. Retrying every 15 seconds until the peer confirms receipt (up to ${maxRetries + 1} attempts).`;
                 await loadDirectMessages();
             } catch (e) {
                 status.innerText = e.message || 'Could not send this reply.';
                 showToast('Direct reply was not sent');
             }
+        }
+
+        function describeDirectMessageStatus(dm, outgoing) {
+            if (!outgoing) return dm.status === 'received' ? 'Received' : dm.status;
+            const attempts = dm.max_attempts > 1 ? ` (attempt ${dm.attempts} of ${dm.max_attempts})` : '';
+            const labels = {
+                waiting: 'Queued, waiting for peer',
+                sent: `Sent, awaiting confirmation${attempts}`,
+                delivered: 'Delivered, confirmed by peer',
+                failed: `Not confirmed${attempts}`,
+                expired: 'Expired, not sent'
+            };
+            return labels[dm.status] || dm.status;
+        }
+
+        async function resendDirectMessage(messageId) {
+            try {
+                const res = await fetch('/api/dm/resend', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: messageId })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || `Resend failed (${res.status})`);
+                showToast('Reply queued for resend');
+            } catch (e) {
+                showToast(e.message || 'Could not resend this reply');
+            }
+            await loadDirectMessages();
         }
 
         function renderDirectMessages() {
@@ -827,6 +1267,11 @@
                 const direction = outgoing ? 'To' : 'From';
                 const localName = localContactNames[peerId];
                 const timestamp = dm.timestamp ? new Date(dm.timestamp * 1000).toLocaleString() : '';
+                const statusText = describeDirectMessageStatus(dm, outgoing);
+                const statusClass = ['delivered', 'received'].includes(dm.status) ? 'text-emerald-400' : (['failed', 'expired'].includes(dm.status) ? 'text-rose-400' : 'text-slate-400');
+                const resendButton = outgoing && ['failed', 'expired'].includes(dm.status)
+                    ? `<button type="button" class="dm-resend-btn text-[10px] font-mono text-amber-300 hover:text-amber-200 cursor-pointer" data-message-id="${escapeHtml(dm.id)}">Resend</button>`
+                    : '';
                 return `
                     <div class="p-4 bg-slate-900 border border-slate-800 rounded space-y-2">
                         <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
@@ -834,9 +1279,10 @@
                                 <span class="text-slate-300">${direction} <span class="text-emerald-300">${escapeHtml(localName || peerId)}</span></span>
                                 ${localName ? `<div class="mt-1 text-[10px] text-slate-500">Session ID: ${escapeHtml(peerId)}</div>` : ''}
                             </div>
-                            <span class="text-slate-500">${escapeHtml(timestamp)} · ${escapeHtml(dm.status)}</span>
+                            <span class="text-slate-500">${escapeHtml(timestamp)} · <span class="${statusClass}">${escapeHtml(statusText)}</span></span>
                         </div>
                         <button type="button" class="local-name-edit text-[10px] font-mono text-blue-300 hover:text-blue-200 cursor-pointer" data-peer-id="${escapeHtml(peerId)}">${localName ? 'Edit local name' : 'Add local name'}</button>
+                        ${resendButton}
                         ${dm.expires_at ? `<div class="text-[10px] font-mono text-slate-500">Expires ${escapeHtml(new Date(dm.expires_at * 1000).toLocaleString())}</div>` : ''}
                         ${dm.reply_to_broadcast ? `<div class="text-[10px] font-mono text-slate-500">Reply to broadcast ${escapeHtml(dm.reply_to_broadcast)}</div>` : ''}
                         <p class="text-sm text-slate-200 whitespace-pre-wrap break-words">${escapeHtml(dm.content)}</p>
@@ -916,6 +1362,7 @@
                 }
 
                 const isSaved = savedCardIds.includes(String(b.id));
+                const cachedSummary = aiSummaries.get(String(b.id));
 
                 return `
                 <div class="p-4 bg-slate-900 border border-slate-800 rounded-lg shadow-md space-y-2">
@@ -929,7 +1376,7 @@
                     <div class="text-xs font-mono text-slate-400">Sender: <span class="text-slate-300">${b.sender_did || 'unknown'}</span> (${b.sender_type || 'node'})</div>
                     <p class="text-sm text-slate-200">${cleanContent}</p>
                     
-                    <div id="ai-summary-${b.id}" class="hidden p-2 bg-slate-950 border border-slate-800 rounded text-xs font-mono text-amber-300/90"></div>
+                    <div id="ai-summary-${b.id}" class="${cachedSummary ? '' : 'hidden'} p-2 bg-slate-950 border border-slate-800 rounded text-xs font-mono text-amber-300/90">${cachedSummary ? escapeHtml('🤖 ' + cachedSummary) : ''}</div>
 
                     <div class="flex flex-wrap items-center gap-2 pt-2">
                         <button id="ai-btn-${b.id}" data-id="${b.id}" onclick="onSummarizeClick(this)" class="px-3 py-1 bg-amber-600/20 hover:bg-amber-600/30 text-amber-400 border border-amber-800/50 font-mono text-xs rounded transition cursor-pointer">
@@ -1040,6 +1487,8 @@
             document.addEventListener('click', event => {
                 const editButton = event.target.closest('.local-name-edit');
                 if (editButton) editLocalContactName(editButton.dataset.peerId);
+                const resendButton = event.target.closest('.dm-resend-btn');
+                if (resendButton) resendDirectMessage(resendButton.dataset.messageId);
             });
 
             const sendBtn = document.getElementById('send-broadcast-btn');
@@ -1100,39 +1549,6 @@ aiRunBtn.addEventListener('click', async () => {
                 });
             }
 
-            const peersModal = document.getElementById('peers-modal');
-            const openPeersBtn = document.getElementById('open-peers-btn');
-            if (openPeersBtn && peersModal) {
-openPeersBtn.addEventListener('click', async () => {
-                    peersModal.classList.remove('hidden');
-                    try {
-                        const res = await fetch('/api/peers');
-                        const peers = await res.json();
-                        document.getElementById('peers-list').innerHTML = peers.map(p => `
-                            <div class="flex justify-between items-center p-2 bg-slate-950 border border-slate-800 rounded">
-                                <div>
-                                    <div class="text-slate-200 font-semibold">${p.did}</div>
-                                    <div class="text-slate-500 text-[10px]">${p.region}</div>
-                                </div>
-                                <div class="text-right">
-                                    <span class="text-emerald-400 font-bold">${p.status}</span>
-                                    <div class="text-slate-500 text-[10px]">${p.latency_ms} ms</div>
-                                </div>
-                            </div>
-                        `).join('');
-                    } catch (e) {
-                        document.getElementById('peers-list').innerHTML = '<div class="text-red-400">Failed to query peers</div>';
-                    }
-                });
-            }
-
-            const closePeersBtn = document.getElementById('close-peers-btn');
-            if (closePeersBtn && peersModal) {
-                closePeersBtn.addEventListener('click', () => {
-                    peersModal.classList.add('hidden');
-                });
-            }
-
             fetchAiModels();
             Promise.all([loadIdentity(), fetchPeers()]).then(() => {
                 fetchBroadcasts();
@@ -1145,6 +1561,139 @@ openPeersBtn.addEventListener('click', async () => {
                 loadDirectMessages();
             }, 5000);
         });
+    </script>
+    <script>
+        let monitorRulesLoaded = false;
+        let monitorPollTimer = null;
+
+        function splitMonitorList(text, allowCommas) {
+            const pattern = allowCommas ? /[\n,]/ : /\n/;
+            return text.split(pattern).map(s => s.trim()).filter(Boolean);
+        }
+
+        function isSafeHttpUrl(url) {
+            return /^https?:\/\//i.test(url);
+        }
+
+        function renderMonitorAlerts(alerts) {
+            const container = document.getElementById('monitor-alerts');
+            if (!alerts.length) {
+                container.innerHTML = '<div class="p-4 text-center text-slate-500 font-mono text-xs">No matches yet.</div>';
+                return;
+            }
+            container.innerHTML = alerts.map(a => {
+                const when = new Date(a.timestamp * 1000).toLocaleString();
+                const source = a.source === 'feed' ? 'FEED' : 'MESH';
+                const link = a.link && isSafeHttpUrl(a.link)
+                    ? `<a href="${escapeHtml(a.link)}" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:underline break-all text-[11px] font-mono">${escapeHtml(a.link)}</a>`
+                    : '';
+                const sender = a.sender_id
+                    ? `<div class="text-[10px] font-mono text-slate-500 break-all">Sender ${escapeHtml(a.sender_id)}</div>`
+                    : '';
+                return `<div class="p-3 bg-slate-950 border border-slate-800 rounded space-y-1">
+                    <div class="flex justify-between gap-2 text-[10px] font-mono text-slate-500">
+                        <span>${source} | matched ${escapeHtml(a.matched_on)}: ${escapeHtml(a.matched_value)}</span>
+                        <span>${escapeHtml(when)}</span>
+                    </div>
+                    <p class="text-sm text-slate-200 break-words">${escapeHtml(a.title)}</p>
+                    ${link}
+                    ${sender}
+                </div>`;
+            }).join('');
+        }
+
+        async function loadMonitor() {
+            try {
+                const res = await fetch('/api/monitor');
+                const data = await res.json();
+
+                if (!monitorRulesLoaded) {
+                    document.getElementById('monitor-feeds').value = (data.config.feeds || []).join('\n');
+                    document.getElementById('monitor-keywords').value = (data.config.keywords || []).join('\n');
+                    document.getElementById('monitor-senders').value = (data.config.sender_ids || []).join('\n');
+                    monitorRulesLoaded = true;
+                }
+
+                const lastRun = data.last_run
+                    ? 'Last check ' + new Date(data.last_run * 1000).toLocaleTimeString()
+                    : 'Waiting for first check';
+                document.getElementById('monitor-status').textContent = `${lastRun} | every ${Math.round(data.poll_secs / 60)} min`;
+                renderMonitorAlerts(data.alerts || []);
+            } catch (err) {
+                document.getElementById('monitor-status').textContent = 'Monitor unreachable';
+            }
+        }
+
+        async function saveMonitorRules() {
+            const payload = {
+                feeds: splitMonitorList(document.getElementById('monitor-feeds').value, false),
+                keywords: splitMonitorList(document.getElementById('monitor-keywords').value, true),
+                sender_ids: splitMonitorList(document.getElementById('monitor-senders').value, false),
+            };
+            try {
+                const res = await fetch('/api/monitor/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const data = await res.json();
+                if (!res.ok || data.status !== 'ok') {
+                    showToast(data.message || 'Failed to save monitor rules');
+                    return;
+                }
+                showToast('Monitor rules saved');
+                loadMonitor();
+            } catch (err) {
+                showToast('Failed to save monitor rules');
+            }
+        }
+
+        async function clearMonitorAlerts() {
+            try {
+                await fetch('/api/monitor/alerts/clear', { method: 'POST' });
+                loadMonitor();
+            } catch (err) {
+                showToast('Failed to clear alerts');
+            }
+        }
+
+        document.getElementById('monitor-save-btn').addEventListener('click', saveMonitorRules);
+        document.getElementById('monitor-refresh-btn').addEventListener('click', loadMonitor);
+        document.getElementById('monitor-clear-btn').addEventListener('click', clearMonitorAlerts);
+        document.querySelector('.nav-tab-btn[data-tab="tab-monitor"]').addEventListener('click', loadMonitor);
+        document.querySelector('.nav-tab-btn[data-tab="tab-about"]').addEventListener('click', loadAbout);
+
+        // Refresh alerts every 30 s while the tab is open. Rules are only loaded once so unsaved edits are kept.
+        monitorPollTimer = setInterval(() => {
+            if (!document.getElementById('tab-monitor').classList.contains('hidden')) {
+                loadMonitor();
+            }
+        }, 30000);
+    </script>
+    <div id="ui-scale-control" class="ui-scale-control" role="group" aria-label="Interface size">
+        <button id="ui-scale-down" type="button" aria-label="Smaller interface">-</button>
+        <span id="ui-scale-value">100%</span>
+        <button id="ui-scale-up" type="button" aria-label="Larger interface">+</button>
+    </div>
+    <script>
+        (() => {
+            // Scales root font size so rem-based Tailwind sizing follows; choice persists in localStorage.
+            const KEY = 'mesh_ui_scale';
+            const MIN = 0.8, MAX = 1.5, STEP = 0.1;
+            const clamp = v => Math.min(MAX, Math.max(MIN, Math.round(v * 10) / 10));
+            const label = document.getElementById('ui-scale-value');
+            let scale = 1;
+            try { scale = clamp(parseFloat(localStorage.getItem(KEY)) || 1); } catch (e) { scale = 1; }
+            function applyScale(next) {
+                scale = clamp(next);
+                document.documentElement.style.fontSize = (scale * 100) + '%';
+                label.innerText = Math.round(scale * 100) + '%';
+                try { localStorage.setItem(KEY, String(scale)); } catch (e) { console.warn('Could not save UI size:', e); }
+            }
+            document.getElementById('ui-scale-down').addEventListener('click', () => applyScale(scale - STEP));
+            document.getElementById('ui-scale-up').addEventListener('click', () => applyScale(scale + STEP));
+            applyScale(scale);
+        })();
     </script>
 </body>
 </html>

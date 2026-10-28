@@ -23,6 +23,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 uuid = { version = "1.6", features = ["v4"] }
 hex = "0.4"
+sha2 = "0.10"
 crossterm = "0.27"
 ratatui = "0.26"
 rand = "0.8"
@@ -30,3 +31,11 @@ clap = { version = "4.4", features = ["derive"] }
 bincode = "1.3"
 toml = "0.8"
 librqbit = "9.0.1"
+
+[[test]]
+name = "wot_integration_test"
+path = "src/tests/wot_integration_test.rs"
+
+[[test]]
+name = "journal_recovery_test"
+path = "src/tests/journal_recovery_test.rs"
