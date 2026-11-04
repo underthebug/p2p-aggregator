@@ -1,0 +1,11 @@
+{
+  "name": "mesh-station-ui",
+  "private": true,
+  "scripts": {
+    "build:css": "tailwindcss -i ./styles.css -o ./tailwind.css --minify"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.1.11",
+    "tailwindcss": "^4.1.11"
+  }
+}

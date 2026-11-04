@@ -1,0 +1,8 @@
+core/target/
+src-tauri/target/
+stage/
+dist/
+*.db
+*.db-*
+*.key
+*.log
