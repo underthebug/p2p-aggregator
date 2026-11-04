@@ -31,11 +31,15 @@ Copy-Item src-tauri\target\release\p2p-daemon.exe stage\
 Push-Location src-tauri
 & ..\node_modules\.bin\tauri.cmd build --no-bundle
 Pop-Location
+
+Copy-Item src-tauri\target\release\p2p-desktop.exe stage\
 ```
 
-The desktop executable is under `src-tauri\target\release`. When NSIS is
-installed, run `& ..\node_modules\.bin\tauri.cmd build --bundles nsis`
-instead to also create the installer under `src-tauri\target\release\bundle`.
+Run the unbundled app from `stage\p2p-desktop.exe` so its node and daemon
+resource executables are beside it. The desktop executable is also under
+`src-tauri\target\release`. When NSIS is installed, run
+`& ..\node_modules\.bin\tauri.cmd build --bundles nsis` instead to create the
+installer under `src-tauri\target\release\bundle`.
 
 The UI is static HTML; its optional Tailwind CSS build tooling is declared in
 `ui\package.json`.
