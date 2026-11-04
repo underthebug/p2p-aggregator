@@ -534,7 +534,7 @@
                 <div id="tab-help" class="tab-content hidden info-stack">
                     <div class="info-header">
                         <h2>Help</h2>
-                        <p>How to use Mesh Station on this machine.</p>
+                        <p>How to use Mesh Station on this machine. Version <span class="app-version info-mono">Loading...</span></p>
                     </div>
                     <div class="info-panel">
                         <h3>Sections</h3>
@@ -592,7 +592,7 @@
                         <p>Sovereign peer-to-peer mesh hub</p>
                     </div>
                     <div class="info-panel">
-                        <div class="info-row"><span>Version</span><span class="info-mono">0.1.0</span></div>
+                        <div class="info-row"><span>Version</span><span class="info-mono app-version">Loading...</span></div>
                         <div class="info-row"><span>Session ID</span><span id="about-session" class="info-mono">Loading...</span></div>
                         <div class="info-row"><span>Transport</span><span class="info-mono">LAN UDP</span></div>
                     </div>
@@ -978,6 +978,15 @@
                 document.getElementById('dm-recipient-input').focus();
             }
         }
+
+        async function loadVersion() {
+            let version = 'unknown (browser mode)';
+            try {
+                if (window.__TAURI_INTERNALS__) version = await window.__TAURI_INTERNALS__.invoke('app_version');
+            } catch (e) { /* keep fallback */ }
+            document.querySelectorAll('.app-version').forEach(el => { el.textContent = version; });
+        }
+        loadVersion();
 
         async function loadAbout() {
             const el = document.getElementById('about-session');
