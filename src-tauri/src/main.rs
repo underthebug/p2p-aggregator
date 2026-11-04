@@ -58,6 +58,11 @@ fn launch_app(app: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+#[tauri::command]
 fn aggregator_status() -> std::collections::BTreeMap<String, String> {
     aggregator::status()
 }
@@ -304,6 +309,7 @@ fn main() {
             feeds::get_user_feeds,
             feeds::add_user_feed,
             feeds::remove_user_feed,
+            app_version,
             aggregator_status,
             aggregator_control,
             local_telemetry,

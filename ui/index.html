@@ -267,8 +267,8 @@
                         <h2 class="text-xl font-bold text-slate-100">Direct Replies</h2>
                         <p class="text-xs text-slate-400 font-mono">Reply to peers using the session ID shown on their broadcasts.</p>
                     </div>
-                    <div class="p-3 bg-amber-950/40 border border-amber-800/50 rounded text-xs font-mono text-amber-200">
-                        LAN prototype: messages are not encrypted. Use only on a trusted network.
+                    <div class="p-3 bg-emerald-950/40 border border-emerald-800/50 rounded text-xs font-mono text-emerald-200">
+                        Direct-message content is end-to-end encrypted and authenticated to peer IDs. Sender, recipient, and timing metadata remain visible; old plaintext messages are rejected.
                     </div>
                     <div class="p-3 bg-slate-900 border border-slate-800 rounded">
                         <div class="text-[10px] uppercase font-mono text-slate-400">Your session ID</div>
@@ -290,8 +290,12 @@
                     </div>
                     <div class="p-4 bg-slate-900 border border-slate-800 rounded space-y-3">
                         <h3 class="text-xs font-mono font-bold text-slate-300 uppercase">Compose a direct reply</h3>
-                        <label class="block text-xs font-mono text-slate-400" for="dm-recipient-input">Recipient session ID</label>
-                        <input id="dm-recipient-input" type="text" autocomplete="off" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-xs font-mono text-slate-200" placeholder="Choose Reply privately on a broadcast">
+                        <label class="block text-xs font-mono text-slate-400" for="dm-recipient-input">Recipient identity key</label>
+                        <div class="flex gap-2">
+                            <input id="dm-recipient-input" type="text" autocomplete="off" class="min-w-0 flex-1 bg-slate-950 border border-slate-800 rounded p-2 text-xs font-mono text-slate-200" placeholder="Copy a sender ID from a feed card, then paste it here">
+                            <button id="paste-dm-recipient-btn" type="button" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 font-mono text-xs rounded cursor-pointer">Paste ID</button>
+                        </div>
+                        <p class="text-[10px] font-mono text-slate-500">Each feed card has Copy sender ID. You can also paste with Ctrl+V.</p>
                         <input id="dm-reply-to-input" type="hidden">
                         <div class="flex items-center justify-between gap-2 text-[10px] font-mono">
                             <label class="text-slate-400" for="dm-input">Message</label>
@@ -530,7 +534,7 @@
                 <div id="tab-help" class="tab-content hidden info-stack">
                     <div class="info-header">
                         <h2>Help</h2>
-                        <p>How to use Mesh Station on this machine.</p>
+                        <p>How to use Mesh Station on this machine. Version <span class="app-version info-mono">Loading...</span></p>
                     </div>
                     <div class="info-panel">
                         <h3>Sections</h3>
@@ -588,7 +592,7 @@
                         <p>Sovereign peer-to-peer mesh hub</p>
                     </div>
                     <div class="info-panel">
-                        <div class="info-row"><span>Version</span><span class="info-mono">0.1.0</span></div>
+                        <div class="info-row"><span>Version</span><span class="info-mono app-version">Loading...</span></div>
                         <div class="info-row"><span>Session ID</span><span id="about-session" class="info-mono">Loading...</span></div>
                         <div class="info-row"><span>Transport</span><span class="info-mono">LAN UDP</span></div>
                     </div>
@@ -929,6 +933,60 @@
             }
             document.body.removeChild(field);
         }
+
+        async function copyPeerId(peerId) {
+            try {
+                if (navigator.clipboard && window.isSecureContext) {
+                    try {
+                        await navigator.clipboard.writeText(peerId);
+                        showToast('Sender ID copied');
+                        return;
+                    } catch (err) {
+                        // Try the legacy copy command when clipboard permissions are unavailable.
+                    }
+                }
+                const field = document.createElement('textarea');
+                field.value = peerId;
+                field.style.position = 'fixed';
+                field.style.left = '-999999px';
+                document.body.appendChild(field);
+                field.select();
+                const copied = document.execCommand('copy');
+                document.body.removeChild(field);
+                if (!copied) throw new Error('Clipboard copy was blocked.');
+                showToast('Sender ID copied');
+            } catch (err) {
+                showToast('Could not copy ID. Select the sender ID and copy it manually.');
+            }
+        }
+
+        async function pasteDirectMessageRecipient() {
+            try {
+                if (!navigator.clipboard || !window.isSecureContext) {
+                    throw new Error('Clipboard read access is unavailable.');
+                }
+                const peerId = (await navigator.clipboard.readText()).trim();
+                if (!/^did:ed25519:[0-9a-f]{64}$/i.test(peerId)) {
+                    throw new Error('Clipboard does not contain a valid Ed25519 peer ID.');
+                }
+                const input = document.getElementById('dm-recipient-input');
+                input.value = peerId;
+                input.focus();
+                showToast('Recipient ID pasted');
+            } catch (err) {
+                showToast('Paste access unavailable. Click the recipient field and press Ctrl+V.');
+                document.getElementById('dm-recipient-input').focus();
+            }
+        }
+
+        async function loadVersion() {
+            let version = 'unknown (browser mode)';
+            try {
+                if (window.__TAURI_INTERNALS__) version = await window.__TAURI_INTERNALS__.invoke('app_version');
+            } catch (e) { /* keep fallback */ }
+            document.querySelectorAll('.app-version').forEach(el => { el.textContent = version; });
+        }
+        loadVersion();
 
         async function loadAbout() {
             const el = document.getElementById('about-session');
@@ -1571,7 +1629,10 @@
                         </div>
                         <span class="text-xs font-mono text-slate-400">${b.timestamp ? new Date(b.timestamp * 1000).toLocaleTimeString() : ''}</span>
                     </div>
-                    <div class="text-xs font-mono text-slate-400">Sender: <span class="text-slate-300">${b.sender_did || 'unknown'}</span> (${b.sender_type || 'node'})</div>
+                    <div class="flex flex-wrap items-center gap-2 text-xs font-mono text-slate-400">
+                        <span>Sender: <span class="text-slate-300">${escapeHtml(b.sender_did || 'unknown')}</span> (${escapeHtml(b.sender_type || 'node')})</span>
+                        ${b.sender_did ? `<button type="button" class="copy-peer-id-btn px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded cursor-pointer" data-peer-id="${escapeHtml(b.sender_did)}">Copy sender ID</button>` : ''}
+                    </div>
                     <p class="text-sm text-slate-200">${cleanContent}</p>
                     
                     <div id="ai-summary-${b.id}" class="${cachedSummary ? '' : 'hidden'} p-2 bg-slate-950 border border-slate-800 rounded text-xs font-mono text-amber-300/90">${cachedSummary ? escapeHtml('🤖 ' + cachedSummary) : ''}</div>
@@ -1580,9 +1641,9 @@
                         <button id="ai-btn-${b.id}" data-id="${b.id}" onclick="onSummarizeClick(this)" class="px-3 py-1 bg-amber-600/20 hover:bg-amber-600/30 text-amber-400 border border-amber-800/50 font-mono text-xs rounded transition cursor-pointer">
                             ⚡ Summarize
                         </button>
-                        ${b.sender_did && b.sender_did !== localPeerId && livePeerIds.has(b.sender_did) ? `
+                        ${b.sender_did && b.sender_did !== localPeerId ? `
                             <button type="button" class="dm-reply-btn px-3 py-1 bg-emerald-700 hover:bg-emerald-600 text-white font-mono text-xs rounded cursor-pointer" data-peer-id="${escapeHtml(b.sender_did)}" data-broadcast-id="${escapeHtml(b.id)}">
-                                Reply privately
+                                Message sender
                             </button>
                         ` : ''}
                         <button onclick="toggleSaveCard('${b.id}')" class="px-2.5 py-1 ${isSaved ? 'bg-purple-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'} font-mono text-xs rounded transition cursor-pointer">
@@ -1665,11 +1726,15 @@
             document.addEventListener('click', event => {
                 const replyButton = event.target.closest('.dm-reply-btn');
                 if (replyButton) replyToBroadcast(replyButton.dataset.peerId, replyButton.dataset.broadcastId);
+                const copyButton = event.target.closest('.copy-peer-id-btn');
+                if (copyButton) copyPeerId(copyButton.dataset.peerId);
             });
 
             const sendDmBtn = document.getElementById('send-dm-btn');
+            const pasteRecipientBtn = document.getElementById('paste-dm-recipient-btn');
             const dmInput = document.getElementById('dm-input');
             if (sendDmBtn) sendDmBtn.addEventListener('click', sendDirectMessage);
+            if (pasteRecipientBtn) pasteRecipientBtn.addEventListener('click', pasteDirectMessageRecipient);
             if (dmInput) {
                 dmInput.addEventListener('input', updateDirectMessageByteCount);
                 updateDirectMessageByteCount();
@@ -1948,4 +2013,3 @@ aiRunBtn.addEventListener('click', async () => {
     </script>
 </body>
 </html>
-

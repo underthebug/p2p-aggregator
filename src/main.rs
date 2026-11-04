@@ -6,6 +6,10 @@ use std::time::Duration;
 use std::env;
 use librqbit::Session;
 
+// Each node needs its own BitTorrent DHT UDP port; sharing the default makes later nodes fail.
+const DHT_PORT_BASE: u16 = 60_000;
+const DHT_PORT_RANGE: u16 = 5_000;
+
 pub mod swarm_protocol;
 pub mod network;
 pub mod db;
@@ -25,6 +29,10 @@ fn classify_publish_error(err: &libp2p::gossipsub::PublishError) -> PublishOutco
         libp2p::gossipsub::PublishError::InsufficientPeers => PublishOutcome::StoredLocally,
         _ => PublishOutcome::Dropped,
     }
+}
+
+fn dht_listen_port(node_port: u16) -> u16 {
+    DHT_PORT_BASE + node_port % DHT_PORT_RANGE
 }
 
 async fn persist_local_fallback(db: &Arc<Mutex<StateDatabase>>, msg: &SwarmMessage, port: u16) {
@@ -55,6 +63,13 @@ fn insufficient_peer_publish_is_handled_as_local_only() {
     assert_eq!(outcome, PublishOutcome::StoredLocally);
 }
 
+#[test]
+fn local_nodes_use_distinct_dht_ports() {
+    let ports = [41871, 41872, 41873].map(dht_listen_port);
+    assert_eq!(ports, [60_000 + 1871, 60_000 + 1872, 60_000 + 1873]);
+    assert!(ports.iter().all(|port| *port != 6771));
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().collect();
@@ -77,7 +92,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Initialize embedded BitTorrent Session via librqbit
     let download_dir = format!("./data/downloads_{}", port);
     std::fs::create_dir_all(&download_dir)?;
-    let bittorrent_session = Session::new(download_dir.into()).await?;
+    let mut session_options = librqbit::SessionOptions::default();
+    let dht = session_options.dht.get_or_insert_with(Default::default);
+    dht.port = Some(dht_listen_port(port));
+    dht.persistence = None;
+    let bittorrent_session = Session::new_with_opts(download_dir.into(), session_options).await?;
     let _bittorrent_session = Arc::new(bittorrent_session);
     println!("🧲 Embedded BitTorrent engine initialized. Downloads folder: ./data/downloads_{}", port);
 

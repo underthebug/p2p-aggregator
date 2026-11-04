@@ -1,6 +1,6 @@
 [package]
 name = "p2p-desktop"
-version = "0.1.0"
+version = "0.2.1"
 edition = "2021"
 
 [lib]
@@ -33,5 +33,11 @@ rand = "0.8"
 ed25519-dalek = { version = "2.2", features = ["rand_core"] }
 hex = "0.4"
 quick-xml = "0.42"
+base64 = "0.22"
+chacha20poly1305 = "0.10"
+curve25519-dalek = "4.1"
+hkdf = "0.12"
+sha2 = "0.10"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
 
 [workspace]
