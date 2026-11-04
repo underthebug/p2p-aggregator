@@ -7,7 +7,7 @@ pub async fn establish_peer_connection(addr: &str) -> Result<String, Box<dyn Err
     let mut socket = TcpStream::connect(addr).await?;
     
     // Load local node identity for cryptographic authentication
-    let identity = NodeIdentity::load_or_generate("node.key");
+    let identity = NodeIdentity::load_or_generate("data/node.key")?;
     let pub_key_bytes = identity.verifying_key.to_bytes();
 
     // 1. Send our public key (32 bytes)

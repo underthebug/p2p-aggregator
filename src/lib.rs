@@ -6,5 +6,6 @@ pub mod ipc;
 pub mod telemetry;
 pub mod peer;
 pub mod journal;
+pub mod migrations;
 pub mod identity;
 pub mod wot;

@@ -12,8 +12,7 @@ use ratatui::{
     Terminal,
 };
 use rusqlite::Connection;
-use ed25519_dalek::{SigningKey, Signer};
-use rand::rngs::OsRng;
+use p2p_aggregator::{crypto::NodeIdentity, identity::sign_broadcast};
 use std::{
     io,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -258,6 +257,7 @@ fn fetch_broadcasts(db_path: &str) -> (Vec<BroadcastItem>, Vec<(String, bool)>, 
 
 fn save_signed_broadcast(db_path: &str, form: &ComposeForm) -> Result<(), Box<dyn std::error::Error>> {
     let conn = Connection::open(db_path)?;
+    p2p_aggregator::migrations::migrate(&conn)?;
     conn.execute(
         "CREATE TABLE IF NOT EXISTS secure_broadcasts (
             id TEXT PRIMARY KEY,
@@ -272,10 +272,8 @@ fn save_signed_broadcast(db_path: &str, form: &ComposeForm) -> Result<(), Box<dy
         [],
     )?;
 
-    let mut csprng = OsRng;
-    let signing_key = SigningKey::generate(&mut csprng);
-    let verifying_key = signing_key.verifying_key();
-    let sender_did = format!("did:p2p:{}", hex::encode(verifying_key.to_bytes()));
+    let identity = NodeIdentity::load_or_generate("data/node.key")?;
+    let sender_did = format!("did:ed25519:{}", hex::encode(identity.verifying_key.to_bytes()));
 
     let id = uuid::Uuid::new_v4().to_string();
     let timestamp = SystemTime::now()
@@ -285,9 +283,17 @@ fn save_signed_broadcast(db_path: &str, form: &ComposeForm) -> Result<(), Box<dy
 
     let magnet_val = if form.magnet.trim().is_empty() { None } else { Some(form.magnet.clone()) };
 
-    let payload_data = format!("{}:{}:{}:{}:{}:{:?}", id, form.region, sender_did, form.content, timestamp, magnet_val);
-    let signature = signing_key.sign(payload_data.as_bytes());
-    let signature_hex = hex::encode(signature.to_bytes());
+    let signature_hex = sign_broadcast(
+        &identity.signing_key,
+        &id,
+        &form.region,
+        &sender_did,
+        &form.sender_type,
+        &form.content,
+        magnet_val.as_deref(),
+        timestamp,
+        None,
+    )?;
 
     conn.execute(
         "INSERT INTO secure_broadcasts (id, region, sender_did, sender_type, content, magnet_link, signature_hex, timestamp) 

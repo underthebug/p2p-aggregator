@@ -1,6 +1,5 @@
 use rusqlite::Connection;
-use ed25519_dalek::{SigningKey, Signer};
-use rand::rngs::OsRng;
+use p2p_aggregator::{crypto::NodeIdentity, identity::sign_broadcast};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -22,6 +21,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("────────────────────────────────────────────────────────────");
 
     let conn = Connection::open(&db_path)?;
+    p2p_aggregator::migrations::migrate(&conn)?;
 
     // Ensure secure broadcast tables exist with 'region' column
     conn.execute(
@@ -40,11 +40,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Graceful migration if old table used 'regain'
     let _ = conn.execute("ALTER TABLE secure_broadcasts RENAME COLUMN regain TO region", []);
 
-    // Generate sovereign Ed25519 signing key for DIDs
-    let mut csprng = OsRng;
-    let signing_key: SigningKey = SigningKey::generate(&mut csprng);
-    let verifying_key = signing_key.verifying_key();
-    let sender_did = format!("did:p2p:{}", hex::encode(verifying_key.to_bytes()));
+    let identity = NodeIdentity::load_or_generate("data/node.key")?;
+    let sender_did = format!("did:ed25519:{}", hex::encode(identity.verifying_key.to_bytes()));
 
     let id = uuid::Uuid::new_v4().to_string();
     let timestamp = SystemTime::now()
@@ -52,10 +49,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_default()
         .as_secs() as i64;
 
-    // Construct payload bytes to sign
-    let payload_data = format!("{}:{}:{}:{}:{}:{:?}", id, region, sender_did, summary, timestamp, magnet);
-    let signature = signing_key.sign(payload_data.as_bytes());
-    let signature_hex = hex::encode(signature.to_bytes());
+    let signature_hex = sign_broadcast(
+        &identity.signing_key,
+        &id,
+        &region,
+        &sender_did,
+        &sender_type,
+        &summary,
+        magnet.as_deref(),
+        timestamp,
+        None,
+    )?;
 
     // Insert signed broadcast into SQLite
     conn.execute(

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use std::time::Duration;
 use std::env;
-use librqbit::{Session, AddTorrent};
+use librqbit::Session;
 
 pub mod swarm_protocol;
 pub mod network;
@@ -78,7 +78,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let download_dir = format!("./data/downloads_{}", port);
     std::fs::create_dir_all(&download_dir)?;
     let bittorrent_session = Session::new(download_dir.into()).await?;
-    let bittorrent_session = Arc::new(bittorrent_session);
+    let _bittorrent_session = Arc::new(bittorrent_session);
     println!("🧲 Embedded BitTorrent engine initialized. Downloads folder: ./data/downloads_{}", port);
 
     let (mut swarm, topic) = build_swarm(&id_keys, port).await?;
@@ -86,13 +86,31 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     println!("✨ Swarm built successfully. Listening for cluster peers and broadcasting feeds...");
 
+    // Extra CLI args are bootstrap multiaddrs (node2/node3 dial node1); P2P_BOOTSTRAP is a comma-separated alternative.
+    let env_bootstrap = env::var("P2P_BOOTSTRAP").unwrap_or_default();
+    let bootstrap_addrs = args.iter().skip(2).filter(|a| !a.starts_with("--")).map(String::as_str).chain(env_bootstrap.split(',')).map(str::trim).filter(|s| !s.is_empty());
+    for raw in bootstrap_addrs {
+        match raw.parse::<libp2p::Multiaddr>() {
+            Ok(addr) => match swarm.dial(addr.clone()) {
+                Ok(()) => println!("🔗 [Port {}] Dialing bootstrap node {}", port, addr),
+                Err(e) => eprintln!("⚠️ [Port {}] Failed to dial bootstrap {}: {:?}", port, addr, e),
+            },
+            Err(e) => eprintln!("⚠️ [Port {}] Invalid bootstrap multiaddr {:?}: {}", port, raw, e),
+        }
+    }
+
     let tx_ticker = tx.clone();
     let peer_id_str = local_peer_id.to_string();
     let peer_id_ticker = peer_id_str.clone();
     let initial_delay = if port % 2 == 0 { 3 } else { 6 };
+    // Test cards are off unless the operator passes --test-cards or sets P2P_TEST_CARDS=1.
+    let test_cards = args.iter().any(|a| a == "--test-cards") || env::var("P2P_TEST_CARDS").map(|v| v == "1").unwrap_or(false);
 
-    // 1. Background task: Publish feed cards every 10 seconds
+    // 1. Background task: Publish test feed cards every 10 seconds (opt-in)
     tokio::spawn(async move {
+        if !test_cards {
+            return;
+        }
         tokio::time::sleep(Duration::from_secs(initial_delay)).await;
 
         let mut interval = tokio::time::interval(Duration::from_secs(10));
@@ -185,9 +203,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 )) => {
                     if let Ok(swarm_msg) = serde_json::from_slice::<SwarmMessage>(&_message.data) {
                         let db_clone = Arc::clone(&db);
-                        let tx_voter = tx.clone();
-                        let my_peer_id = peer_id_str.clone();
-                        let bt_session = Arc::clone(&bittorrent_session);
 
                         match swarm_msg {
                             SwarmMessage::FeedCard { id, title, url, summary, magnet_link, author_peer_id, timestamp } => {
@@ -207,52 +222,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                         println!("  💾 [DB - Port {}] Feed card persisted successfully.", port);
                                     }
 
-                                    // 2. Trigger embedded BitTorrent download if a magnet link is present
-                                    if let Some(magnet) = magnet_link {
-                                        let bt_port = port;
-                                        tokio::spawn(async move {
-                                            match bt_session.add_torrent(AddTorrent::from_url(&magnet), None).await {
-                                                Ok(_added) => {
-                                                    println!("🧲 [BitTorrent - Port {}] Added torrent to download queue successfully!", bt_port);
-                                                }
-                                                Err(e) => {
-                                                    eprintln!("⚠️ [BitTorrent - Port {}] Failed to add torrent (might already be active): {:?}", bt_port, e);
-                                                }
-                                            }
-                                        });
-                                    }
-
-                                    // 3. Autonomous Consensus Vote
-                                    if author_peer_id != my_peer_id {
-                                        tokio::time::sleep(Duration::from_millis(500)).await;
-                                        
-                                        if let Err(e) = db.save_vote(&id, &my_peer_id, 1) {
-                                            eprintln!("❌ Failed to save local vote: {}", e);
-                                        }
-
-                                        let vote_msg = SwarmMessage::Vote {
-                                            card_id: id.clone(),
-                                            voter_peer_id: my_peer_id.clone(),
-                                            direction: 1,
-                                        };
-                                        let _ = tx_voter.send(vote_msg).await;
-                                        println!("🎮 [VOTER - Port {}] Cast & broadcast consensus UPVOTE for card {}", port, &id[..8]);
-                                    }
+                                    // 2. Magnet links are never downloaded automatically; the user chooses.
                                 });
                             }
-                            SwarmMessage::Vote { card_id, voter_peer_id, direction } => {
-                                let symbol = if direction > 0 { "👍 UPVOTE" } else { "👎 DOWNVOTE" };
-                                println!("\n🎮 [NODE {}] [VOTE RECEIVED] Card {} got {} from {}", port, &card_id[..8], symbol, &voter_peer_id[..16]);
-
-                                tokio::spawn(async move {
-                                    let mut db = db_clone.lock().await;
-                                    if let Err(e) = db.save_vote(&card_id, &voter_peer_id, direction.into()) {
-                                        eprintln!("❌ Failed to save vote to SQLite: {}", e);
-                                    } else {
-                                        println!("  💾 [DB - Port {}] Vote persisted successfully.", port);
-                                    }
-                                });
-                            }
+                            // Voting is retired: it generated too much traffic, so votes are ignored.
+                            SwarmMessage::Vote { .. } => {}
                             SwarmMessage::DirectMessage { sender_peer_id, content, .. } => {
                                 println!("\n💬 [NODE {}] [DM from {}]: {}", port, sender_peer_id, content);
                             }

@@ -1,16 +1,32 @@
 use axum::{
+    body::Body,
     extract::{ConnectInfo, State, Query},
-    http::{HeaderValue, StatusCode},
+    http::{header, HeaderValue, Request, Response, StatusCode},
+    middleware::{self, Next},
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
-use p2p_desktop_lib::db::DbManager;
-use std::collections::{HashMap, HashSet, VecDeque};
+use p2p_desktop_lib::aggregator;
+use p2p_desktop_lib::db::{DbManager, SecureBroadcast};
+use p2p_desktop_lib::hardware;
+use p2p_desktop_lib::monitor::{
+    self, MonitorConfig, MonitorState, normalize_config as normalize_monitor_config,
+    CONFIG_PATH as MONITOR_CONFIG_PATH, POLL_SECS as MONITOR_POLL_SECS,
+};
+use p2p_desktop_lib::rss;
+#[cfg(test)]
+use p2p_desktop_lib::monitor::{match_keyword, BoundedSeen};
+#[cfg(test)]
+use p2p_desktop_lib::rss::parse_feed_items;
+use std::collections::HashMap;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use rand::{rngs::OsRng, RngCore};
 use tokio::net::UdpSocket;
 use tower_http::cors::{Any, AllowOrigin, CorsLayer};
 use tower_http::services::ServeDir;
@@ -64,78 +80,7 @@ struct DaemonState {
     monitor: Arc<Mutex<MonitorState>>,
 }
 
-const MONITOR_POLL_SECS: u64 = 300;
-const MONITOR_CONFIG_PATH: &str = "data/monitor.json";
-const MONITOR_MAX_ALERTS: usize = 200;
-const MONITOR_MAX_SEEN: usize = 5000;
-const MONITOR_MAX_FEED_ITEMS: usize = 50;
-const MONITOR_MAX_LIST_ENTRIES: usize = 50;
-const MONITOR_MAX_ENTRY_CHARS: usize = 200;
-const MONITOR_MESH_SCAN_LIMIT: i64 = 200;
 
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-struct MonitorConfig {
-    #[serde(default)]
-    feeds: Vec<String>,
-    #[serde(default)]
-    keywords: Vec<String>,
-    #[serde(default)]
-    sender_ids: Vec<String>,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-struct MonitorAlert {
-    id: u64,
-    timestamp: i64,
-    source: String,
-    matched_on: String,
-    matched_value: String,
-    title: String,
-    link: Option<String>,
-    sender_id: Option<String>,
-}
-
-#[derive(Default)]
-struct BoundedSeen {
-    set: HashSet<String>,
-    order: VecDeque<String>,
-}
-
-impl BoundedSeen {
-    /// Returns true when the key was not seen before.
-    fn insert(&mut self, key: String) -> bool {
-        if self.set.contains(&key) {
-            return false;
-        }
-        if self.order.len() >= MONITOR_MAX_SEEN {
-            if let Some(oldest) = self.order.pop_front() {
-                self.set.remove(&oldest);
-            }
-        }
-        self.set.insert(key.clone());
-        self.order.push_back(key);
-        true
-    }
-}
-
-#[derive(Default)]
-struct MonitorState {
-    config: MonitorConfig,
-    alerts: VecDeque<MonitorAlert>,
-    seen: BoundedSeen,
-    next_alert_id: u64,
-    seeded: bool,
-    last_run: Option<i64>,
-}
-
-fn push_monitor_alert(state: &mut MonitorState, mut alert: MonitorAlert) {
-    state.next_alert_id += 1;
-    alert.id = state.next_alert_id;
-    state.alerts.push_front(alert);
-    while state.alerts.len() > MONITOR_MAX_ALERTS {
-        state.alerts.pop_back();
-    }
-}
 
 struct PeerRoute {
     address: SocketAddr,
@@ -208,21 +153,11 @@ async fn post_broadcast(
         timestamp,
     ) {
         Ok(_) => {
-            gossip_forward_broadcast(&state, &message_id, &region, sender_did, &payload.content, timestamp).await;
+            gossip_forward_broadcast(&state, &message_id).await;
             (StatusCode::OK, "Broadcast published successfully")
         },
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Failed to insert broadcast"),
     }
-}
-
-#[derive(serde::Serialize)]
-struct TelemetryStatus {
-    cpu_usage_pct: u32,
-    ram_used_mb: u64,
-    ram_total_mb: u64,
-    vram_used_mb: u64,
-    vram_total_mb: u64,
-    gpu_name: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -267,6 +202,35 @@ async fn launch_app_handler(
             Json(serde_json::json!({ "error": err.to_string() })),
         ),
     }
+}
+
+fn control_aggregator(client: SocketAddr, verb: &str) -> (StatusCode, Json<serde_json::Value>) {
+    if !client.ip().is_loopback() {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Services can only be controlled from this machine" })),
+        );
+    }
+    match aggregator::control(verb) {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))),
+        Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": err }))),
+    }
+}
+
+async fn aggregator_start_handler(ConnectInfo(client): ConnectInfo<SocketAddr>) -> impl IntoResponse {
+    control_aggregator(client, "start")
+}
+
+async fn aggregator_stop_handler(ConnectInfo(client): ConnectInfo<SocketAddr>) -> impl IntoResponse {
+    control_aggregator(client, "stop")
+}
+
+async fn aggregator_restart_handler(ConnectInfo(client): ConnectInfo<SocketAddr>) -> impl IntoResponse {
+    control_aggregator(client, "restart")
+}
+
+async fn aggregator_status_handler() -> impl IntoResponse {
+    Json(aggregator::status())
 }
 
 async fn get_identity(State(state): State<DaemonState>) -> impl IntoResponse {
@@ -417,12 +381,16 @@ fn encode_direct_message(record: &DirectMessageRecord) -> Result<Vec<u8>, serde_
     let message = GossipMessage {
         msg_type: "direct_message".to_string(),
         sender_did: record.sender_id.clone(),
+        sender_type: String::new(),
         region: String::new(),
         content: record.content.clone(),
         timestamp: record.timestamp,
         message_id: Some(record.id.clone()),
         recipient_id: Some(record.recipient_id.clone()),
         reply_to_broadcast: record.reply_to_broadcast.clone(),
+        sender_public_key_hex: String::new(),
+        signature_hex: String::new(),
+        ai_tag: None,
     };
     serde_json::to_vec(&message)
 }
@@ -620,32 +588,7 @@ async fn favicon_handler() -> impl IntoResponse {
 }
 
 async fn telemetry_handler() -> impl IntoResponse {
-    let mut vram_used = 0;
-    let mut vram_total = 4096;
-    let mut gpu_name = "GPU VRAM".to_string();
-
-    if let Ok(output) = std::process::Command::new("nvidia-smi")
-        .args(&["--query-gpu=name,memory.used,memory.total", "--format=csv,noheader,nounits"])
-        .output()
-    {
-        let text = String::from_utf8_lossy(&output.stdout);
-        let parts: Vec<&str> = text.trim().split(',').map(|s| s.trim()).collect();
-        if parts.len() >= 3 {
-            gpu_name = parts[0].to_string();
-            vram_used = parts[1].parse().unwrap_or(0);
-            vram_total = parts[2].parse().unwrap_or(4096);
-        }
-    }
-
-    let status = TelemetryStatus {
-        cpu_usage_pct: 18,
-        ram_used_mb: 4820,
-        ram_total_mb: 12288,
-        vram_used_mb: vram_used,
-        vram_total_mb: vram_total,
-        gpu_name,
-    };
-    Json(status)
+    Json(hardware::snapshot().await)
 }
 
 #[derive(serde::Serialize)]
@@ -694,7 +637,8 @@ async fn ingest_payload_handler(Json(payload): Json<IngestPayloadReq>) -> impl I
 
 async fn ai_models_handler() -> impl IntoResponse {
     let client = reqwest::Client::new();
-    if let Ok(res) = client.get("http://127.0.0.1:11434/api/tags").send().await {
+    let base = p2p_desktop_lib::ai_settings::load(std::path::Path::new(p2p_desktop_lib::ai_settings::SETTINGS_PATH));
+    if let Ok(res) = client.get(format!("{base}/api/tags")).send().await {
         if let Ok(json) = res.json::<serde_json::Value>().await {
             return Json(json);
         }
@@ -712,6 +656,12 @@ async fn ai_models_handler() -> impl IntoResponse {
 struct AiSummarizeReq {
     id: String,
     content: String,
+    model: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct AiChatReq {
+    prompt: String,
     model: Option<String>,
 }
 
@@ -762,7 +712,7 @@ fn sanitize_summary(raw: &str, tag: &str) -> Option<String> {
     Some(format!("{} {}", words.join(" "), tag))
 }
 
-async fn ai_summarize_handler(Json(payload): Json<AiSummarizeReq>) -> impl IntoResponse {
+async fn ai_summarize_handler(Json(payload): Json<AiSummarizeReq>) -> Json<serde_json::Value> {
     let chosen_model = match payload.model {
         Some(ref m) if !m.trim().is_empty() => m.trim().to_string(),
         _ => "llama3.1:8b".to_string(),
@@ -775,7 +725,7 @@ async fn ai_summarize_handler(Json(payload): Json<AiSummarizeReq>) -> impl IntoR
         .unwrap_or_default();
 
     let res = client
-        .post("http://127.0.0.1:11434/api/chat")
+        .post(format!("{}/api/chat", p2p_desktop_lib::ai_settings::load(std::path::Path::new(p2p_desktop_lib::ai_settings::SETTINGS_PATH))))
         .json(&serde_json::json!({
             "model": chosen_model,
             "messages": build_summary_messages(&payload.content),
@@ -800,6 +750,26 @@ async fn ai_summarize_handler(Json(payload): Json<AiSummarizeReq>) -> impl IntoR
 
     Json(serde_json::json!({ "status": "error", "summary": "AI offline or timed out." }))
 }
+async fn ai_chat_handler(Json(payload): Json<AiChatReq>) -> Json<serde_json::Value> {
+    let response = ai_summarize_handler(Json(AiSummarizeReq {
+        id: "chat".to_string(),
+        content: payload.prompt,
+        model: payload.model,
+    }))
+    .await
+    .0;
+    let status = response
+        .get("status")
+        .cloned()
+        .unwrap_or_else(|| serde_json::Value::String("error".to_string()));
+    let reply = response
+        .get("summary")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("AI offline or timed out.")
+        .to_string();
+    Json(serde_json::json!({ "status": status, "reply": reply, "response": reply }))
+}
+
 
 #[derive(serde::Deserialize)]
 struct RssIngestReq {
@@ -813,251 +783,54 @@ async fn rss_ingest_handler(
     Json(payload): Json<RssIngestReq>,
 ) -> impl IntoResponse {
     let region = payload.region.unwrap_or_else(|| "#global".to_string());
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(8))
-        .build()
-        .unwrap_or_default();
-
-    match client.get(&payload.feed_url).send().await {
-        Ok(resp) => {
-            if let Ok(text) = resp.text().await {
-                let mut count = 0;
-                for block in text.split("<item>").skip(1).take(5) {
-                    let title = extract_xml_tag(block, "title");
-                    let link = extract_xml_tag(block, "link");
-                    if !title.is_empty() {
-                        let content = if !link.is_empty() {
-                            format!("📰 {} - {}", title, link)
-                        } else {
-                            format!("📰 {}", title)
-                        };
-                        let tags_vec = payload.tags.clone().unwrap_or_else(|| vec!["RSS".to_string()]);
-                        let formatted_tag = tags_vec.iter()
-                            .map(|t| format!("#{}", t.trim().trim_start_matches('#').to_lowercase()))
-                            .collect::<Vec<String>>()
-                            .join(" ");
-                        let _ = state.db.insert_broadcast(&region, "did:p2p:rss-bot", "node", &content, None, Some(&formatted_tag));
-                        count += 1;
-                    }
-                }
-                if count == 0 {
-                    let _ = state.db.insert_broadcast(&region, "did:p2p:rss-bot", "node", &format!("Fetched feed: {}", payload.feed_url), None, Some("[RSS]"));
-                    count = 1;
-                }
-                return Json(serde_json::json!({ "status": "ok", "count": count }));
-            }
-        }
-        Err(_) => {}
-    }
-
-    Json(serde_json::json!({ "status": "error", "message": "Failed to fetch RSS feed." }))
-}
-
-struct FeedItem {
-    title: String,
-    link: String,
-}
-
-fn strip_cdata(value: &str) -> String {
-    let trimmed = value.trim();
-    trimmed
-        .strip_prefix("<![CDATA[")
-        .and_then(|inner| inner.strip_suffix("]]>"))
-        .unwrap_or(trimmed)
-        .trim()
-        .to_string()
-}
-
-fn atom_link_href(block: &str) -> Option<String> {
-    let start = block.find("<link")?;
-    let rest = &block[start..];
-    let end = rest.find('>')?;
-    let tag = &rest[..end];
-    let href_start = tag.find("href=\"")? + "href=\"".len();
-    let after = &tag[href_start..];
-    Some(after[..after.find('"')?].to_string())
-}
-
-/// Parses RSS `<item>` and Atom `<entry>` blocks into title and link pairs.
-fn parse_feed_items(text: &str) -> Vec<FeedItem> {
-    text.split("<item>")
-        .skip(1)
-        .chain(text.split("<entry>").skip(1))
-        .take(MONITOR_MAX_FEED_ITEMS)
-        .filter_map(|block| {
-            let title = strip_cdata(&extract_xml_tag(block, "title"));
-            if title.is_empty() {
-                return None;
-            }
-            let mut link = strip_cdata(&extract_xml_tag(block, "link"));
-            if link.is_empty() {
-                link = atom_link_href(block).unwrap_or_default();
-            }
-            Some(FeedItem { title, link })
-        })
-        .collect()
-}
-
-/// Returns the first configured keyword found in the haystack (case-insensitive).
-fn match_keyword<'a>(keywords: &'a [String], haystack: &str) -> Option<&'a str> {
-    let lowered = haystack.to_lowercase();
-    keywords
-        .iter()
-        .find(|keyword| lowered.contains(&keyword.to_lowercase()))
-        .map(|keyword| keyword.as_str())
-}
-
-fn normalize_monitor_config(raw: MonitorConfig) -> Result<MonitorConfig, String> {
-    fn clean(list: Vec<String>, label: &str) -> Result<Vec<String>, String> {
-        let mut out: Vec<String> = Vec::new();
-        for item in list {
-            let value = item.trim().to_string();
-            if value.is_empty() || out.contains(&value) {
-                continue;
-            }
-            if value.chars().count() > MONITOR_MAX_ENTRY_CHARS {
-                return Err(format!("{} entries must be {} characters or fewer.", label, MONITOR_MAX_ENTRY_CHARS));
-            }
-            out.push(value);
-        }
-        if out.len() > MONITOR_MAX_LIST_ENTRIES {
-            return Err(format!("{} limit is {} entries.", label, MONITOR_MAX_LIST_ENTRIES));
-        }
-        Ok(out)
-    }
-
-    let feeds = clean(raw.feeds, "Feed")?;
-    if let Some(bad) = feeds.iter().find(|url| !(url.starts_with("http://") || url.starts_with("https://"))) {
-        return Err(format!("Feed URL must start with http:// or https://: {}", bad));
-    }
-    Ok(MonitorConfig {
-        feeds,
-        keywords: clean(raw.keywords, "Keyword")?,
-        sender_ids: clean(raw.sender_ids, "Sender ID")?,
-    })
-}
-
-fn load_monitor_config() -> MonitorConfig {
-    std::fs::read_to_string(MONITOR_CONFIG_PATH)
-        .ok()
-        .and_then(|text| serde_json::from_str::<MonitorConfig>(&text).ok())
-        .and_then(|config| normalize_monitor_config(config).ok())
-        .unwrap_or_default()
-}
-
-fn save_monitor_config(config: &MonitorConfig) -> std::io::Result<()> {
-    let json = serde_json::to_string_pretty(config)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-    let tmp_path = format!("{}.tmp", MONITOR_CONFIG_PATH);
-    std::fs::write(&tmp_path, json)?;
-    std::fs::rename(&tmp_path, MONITOR_CONFIG_PATH)
-}
-
-/// One pass over all configured feeds and the mesh ledger.
-/// The first pass only records what already exists so startup does not flood alerts.
-async fn run_monitor_cycle(state: &DaemonState) {
-    let (config, alerts_enabled) = {
-        let monitor = state.monitor.lock().unwrap();
-        (monitor.config.clone(), monitor.seeded)
+    let text = match rss::fetch_feed_text(&payload.feed_url).await {
+        Ok(text) => text,
+        Err(message) => return Json(serde_json::json!({ "status": "error", "message": message })),
     };
-
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(8))
-        .build()
-        .unwrap_or_default();
-
-    for feed_url in &config.feeds {
-        let text = match client.get(feed_url).send().await {
-            Ok(resp) => match resp.text().await {
-                Ok(text) => text,
-                Err(_) => continue,
-            },
-            Err(_) => continue,
+    let tags = payload.tags.unwrap_or_else(|| vec!["RSS".to_string()]);
+    let formatted_tag = tags
+        .iter()
+        .map(|tag| format!("#{}", tag.trim().trim_start_matches('#').to_lowercase()))
+        .collect::<Vec<String>>()
+        .join(" ");
+    let sender_did = state.db.local_sender_id();
+    let mut count = 0;
+    let items = match rss::parse_feed_items(&text) {
+        Ok(items) => items,
+        Err(message) => return Json(serde_json::json!({ "status": "error", "message": message })),
+    };
+    for item in items.into_iter().take(5) {
+        let content = if item.link.is_empty() {
+            format!("📰 {}", item.title)
+        } else {
+            format!("📰 {} - {}", item.title, item.link)
         };
-        let items = parse_feed_items(&text);
-
-        let mut monitor = state.monitor.lock().unwrap();
-        for item in items {
-            let identity = if item.link.is_empty() { item.title.clone() } else { item.link.clone() };
-            if !monitor.seen.insert(format!("feed:{}|{}", feed_url, identity)) || !alerts_enabled {
-                continue;
-            }
-            let haystack = format!("{} {}", item.title, item.link);
-            if let Some(keyword) = match_keyword(&config.keywords, &haystack) {
-                let alert = MonitorAlert {
-                    id: 0,
-                    timestamp: unix_timestamp(),
-                    source: "feed".to_string(),
-                    matched_on: "keyword".to_string(),
-                    matched_value: keyword.to_string(),
-                    title: item.title,
-                    link: if item.link.is_empty() { None } else { Some(item.link) },
-                    sender_id: None,
-                };
-                push_monitor_alert(&mut monitor, alert);
-            }
-        }
+        let _ = state.db.insert_broadcast(
+            &region,
+            &sender_did,
+            "node",
+            &content,
+            None,
+            Some(&formatted_tag),
+        );
+        count += 1;
     }
-
-    match state.db.get_broadcasts(MONITOR_MESH_SCAN_LIMIT) {
-        Ok(broadcasts) => {
-            let mut monitor = state.monitor.lock().unwrap();
-            for broadcast in broadcasts {
-                if !monitor.seen.insert(format!("mesh:{}", broadcast.id)) || !alerts_enabled {
-                    continue;
-                }
-                let sender_match = config
-                    .sender_ids
-                    .iter()
-                    .find(|id| id.as_str() == broadcast.sender_did)
-                    .map(|id| ("sender", id.clone()));
-                let matched = sender_match.or_else(|| {
-                    match_keyword(&config.keywords, &broadcast.content)
-                        .map(|keyword| ("keyword", keyword.to_string()))
-                });
-                if let Some((matched_on, matched_value)) = matched {
-                    let title: String = broadcast.content.chars().take(160).collect();
-                    let alert = MonitorAlert {
-                        id: 0,
-                        timestamp: broadcast.timestamp,
-                        source: "mesh".to_string(),
-                        matched_on: matched_on.to_string(),
-                        matched_value,
-                        title,
-                        link: None,
-                        sender_id: Some(broadcast.sender_did.clone()),
-                    };
-                    push_monitor_alert(&mut monitor, alert);
-                }
-            }
-        }
-        Err(_) => {}
+    if count == 0 {
+        let _ = state.db.insert_broadcast(
+            &region,
+            &sender_did,
+            "node",
+            &format!("Fetched feed: {}", payload.feed_url),
+            None,
+            Some("[RSS]"),
+        );
+        count = 1;
     }
-
-    let mut monitor = state.monitor.lock().unwrap();
-    monitor.seeded = true;
-    monitor.last_run = Some(unix_timestamp());
+    Json(serde_json::json!({ "status": "ok", "count": count }))
 }
 
-fn spawn_feed_monitor(state: DaemonState) {
-    tokio::spawn(async move {
-        loop {
-            run_monitor_cycle(&state).await;
-            tokio::time::sleep(Duration::from_secs(MONITOR_POLL_SECS)).await;
-        }
-    });
-}
 
-fn extract_xml_tag(block: &str, tag: &str) -> String {
-    let open = format!("<{}>", tag);
-    let close = format!("</{}>", tag);
-    if let Some(start) = block.find(&open) {
-        if let Some(end) = block[start + open.len()..].find(&close) {
-            return block[start + open.len()..start + open.len() + end].trim().to_string();
-        }
-    }
-    "".to_string()
-}
+
 
 async fn get_monitor_handler(State(state): State<DaemonState>) -> impl IntoResponse {
     let monitor = state.monitor.lock().unwrap();
@@ -1082,7 +855,7 @@ async fn post_monitor_config_handler(
             );
         }
     };
-    if let Err(err) = save_monitor_config(&config) {
+    if let Err(err) = monitor::save_config(std::path::Path::new(MONITOR_CONFIG_PATH), &config) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "status": "error", "message": format!("Failed to save monitor config: {}", err) })),
@@ -1100,34 +873,210 @@ async fn clear_monitor_alerts_handler(State(state): State<DaemonState>) -> impl 
     Json(serde_json::json!({ "status": "ok" }))
 }
 
-fn find_free_port(start: u16, search_range: u16) -> Result<u16, std::io::Error> {
-    for port in start..(start + search_range) {
-        match std::net::TcpListener::bind(("0.0.0.0", port)) {
-            Ok(listener) => {
-                let _ = listener;
-                return Ok(port);
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::AddrInUse => continue,
-            Err(err) => return Err(err),
+#[derive(serde::Deserialize)]
+struct RssUrlReq {
+    url: String,
+}
+
+#[derive(serde::Deserialize)]
+struct RssOpmlReq {
+    opml: String,
+}
+
+async fn rss_feeds_handler(State(state): State<DaemonState>) -> impl IntoResponse {
+    match state.db.list_subscriptions() {
+        Ok(urls) => {
+            let feeds: Vec<serde_json::Value> = urls
+                .into_iter()
+                .map(|url| serde_json::json!({ "url": url }))
+                .collect();
+            (StatusCode::OK, Json(serde_json::json!(feeds)))
         }
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "status": "error", "message": err.to_string() })),
+        ),
     }
-    Err(std::io::Error::new(
-        std::io::ErrorKind::AddrInUse,
-        format!("no free ports available in range {}-{}", start, start + search_range),
-    ))
+}
+
+async fn rss_subscribe_handler(
+    State(state): State<DaemonState>,
+    Json(payload): Json<RssUrlReq>,
+) -> impl IntoResponse {
+    let url = payload.url.trim().to_string();
+    match rss::fetch_items(&url).await {
+        Ok(items) => {
+            if let Err(err) = state.db.add_subscription(&url) {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "status": "error", "message": err.to_string() })),
+                );
+            }
+            (StatusCode::OK, Json(serde_json::json!({ "status": "ok", "items": items })))
+        }
+        Err(message) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "status": "error", "message": message })),
+        ),
+    }
+}
+
+async fn rss_unsubscribe_handler(
+    State(state): State<DaemonState>,
+    Json(payload): Json<RssUrlReq>,
+) -> impl IntoResponse {
+    match state.db.remove_subscription(payload.url.trim()) {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "status": "ok" }))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "status": "error", "message": err.to_string() })),
+        ),
+    }
+}
+
+async fn rss_opml_export_handler(State(state): State<DaemonState>) -> impl IntoResponse {
+    match state.db.list_subscriptions() {
+        Ok(urls) => (
+            [(axum::http::header::CONTENT_TYPE, "text/x-opml; charset=utf-8")],
+            rss::build_opml(&urls),
+        )
+            .into_response(),
+        Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
+    }
+}
+
+async fn rss_opml_import_handler(
+    State(state): State<DaemonState>,
+    Json(payload): Json<RssOpmlReq>,
+) -> impl IntoResponse {
+    let urls = rss::parse_opml_urls(&payload.opml);
+    let added = urls
+        .iter()
+        .filter(|url| state.db.add_subscription(url.as_str()).is_ok())
+        .count();
+    Json(serde_json::json!({ "status": "ok", "count": added }))
+}
+
+fn configured_http_addr() -> Result<SocketAddr, std::io::Error> {
+    let args: Vec<String> = std::env::args().collect();
+    let cli_addr = args
+        .windows(2)
+        .find(|pair| pair[0] == "--http-bind")
+        .map(|pair| pair[1].as_str());
+    let configured = cli_addr
+        .map(str::to_owned)
+        .or_else(|| std::env::var("MESH_HTTP_BIND").ok())
+        .unwrap_or_else(|| "127.0.0.1:41875".to_string());
+    configured.parse().map_err(|err| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("invalid HTTP bind address {configured:?}: {err}"),
+        )
+    })
+}
+
+fn load_or_create_api_token(data_dir: &std::path::Path) -> Result<String, std::io::Error> {
+    if let Ok(token) = std::env::var("MESH_API_TOKEN") {
+        let token = token.trim();
+        if token.is_empty() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "MESH_API_TOKEN cannot be empty",
+            ));
+        }
+        return Ok(token.to_string());
+    }
+
+    let token_path = data_dir.join("api.token");
+    match fs::read_to_string(&token_path) {
+        Ok(token) if !token.trim().is_empty() => return Ok(token.trim().to_string()),
+        Ok(_) => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "data/api.token is empty",
+            ));
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err),
+    }
+
+    let mut random = [0u8; 32];
+    OsRng.fill_bytes(&mut random);
+    let token: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+
+    match options.open(&token_path) {
+        Ok(mut file) => {
+            file.write_all(token.as_bytes())?;
+            file.write_all(b"\n")?;
+            Ok(token)
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            let existing = fs::read_to_string(token_path)?;
+            let existing = existing.trim();
+            if existing.is_empty() {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "data/api.token is empty",
+                ))
+            } else {
+                Ok(existing.to_string())
+            }
+        }
+        Err(err) => Err(err),
+    }
+}
+
+fn requires_api_auth(path: &str) -> bool {
+    path == "/api/dm"
+        || path.starts_with("/api/dm/")
+        || path.starts_with("/api/ai/")
+        || path.starts_with("/api/aggregator/")
+}
+
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    let mut difference = left.len() ^ right.len();
+    for index in 0..left.len().max(right.len()) {
+        difference |= usize::from(*left.get(index).unwrap_or(&0) ^ *right.get(index).unwrap_or(&0));
+    }
+    difference == 0
+}
+
+async fn require_api_token(
+    State(expected_token): State<String>,
+    request: Request<Body>,
+    next: Next,
+) -> Response<Body> {
+    if !requires_api_auth(request.uri().path()) {
+        return next.run(request).await;
+    }
+    let authorized = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .is_some_and(|token| constant_time_eq(token.as_bytes(), expected_token.as_bytes()));
+    if authorized {
+        next.run(request).await
+    } else {
+        (StatusCode::UNAUTHORIZED, "Bearer token required").into_response()
+    }
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let data_dir = PathBuf::from("data");
     std::fs::create_dir_all(&data_dir)?;
     let db_path = data_dir.join("state_41871.db");
     let db = Arc::new(DbManager::new(db_path)?);
-    let peer_id = format!(
-        "did:p2p:{}-{}",
-        std::process::id(),
-        SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis()
-    );
+    let api_token = load_or_create_api_token(&data_dir)?;
+    let peer_id = db.local_sender_id();
     let (socket, gossip_port) = bind_gossip_socket(41873, 10).await?;
     let state = DaemonState {
         db,
@@ -1139,7 +1088,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         pending_messages: Arc::new(Mutex::new(HashMap::new())),
         pending_dispatch_lock: Arc::new(tokio::sync::Mutex::new(())),
         monitor: Arc::new(Mutex::new(MonitorState {
-            config: load_monitor_config(),
+            config: monitor::load_config(std::path::Path::new(MONITOR_CONFIG_PATH)),
             ..Default::default()
         })),
     };
@@ -1148,19 +1097,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let browser_ui = std::env::args().any(|arg| arg == "--browser-ui")
         || std::env::var("MESH_BROWSER_UI").map(|v| v == "1").unwrap_or(false);
 
-    let http_port = match find_free_port(41872, 20) {
-        Ok(port) => port,
-        Err(err) => {
-            eprintln!("[HTTP] Unable to start daemon because all preferred ports are busy: {}", err);
-            return Err(Box::new(err) as Box<dyn std::error::Error>);
-        }
-    };
+    let http_addr = configured_http_addr()?;
 
     println!("[IDENTITY] Local session ID: {peer_id}");
     spawn_gossip_listener(state.clone());
     spawn_presence_beacon(state.clone());
     spawn_pending_message_worker(state.clone());
-    spawn_feed_monitor(state.clone());
+    tokio::spawn(monitor::run_loop(state.db.clone(), state.monitor.clone()));
     let app = Router::new()
         .route("/api/broadcasts", get(get_broadcasts).post(post_broadcast))
         .route("/api/dm", get(get_direct_messages).post(post_direct_message))
@@ -1170,13 +1113,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/peers", get(peers_handler))
         .route("/api/payload/ingest", post(ingest_payload_handler))
         .route("/api/ai/models", get(ai_models_handler))
+        .route("/api/ai/chat", post(ai_chat_handler))
         .route("/api/ai/summarize", post(ai_summarize_handler))
         .route("/api/rss/ingest", post(rss_ingest_handler))
         .route("/api/monitor", get(get_monitor_handler))
         .route("/api/monitor/config", post(post_monitor_config_handler))
         .route("/api/monitor/alerts/clear", post(clear_monitor_alerts_handler))
+        .route("/api/rss/feeds", get(rss_feeds_handler))
+        .route("/api/rss/sub", post(rss_subscribe_handler).delete(rss_unsubscribe_handler))
+        .route("/api/rss/opml", get(rss_opml_export_handler).post(rss_opml_import_handler))
         .route("/api/apps/launch", post(launch_app_handler))
-        .route("/favicon.ico", get(favicon_handler));
+        .route("/api/aggregator/status", get(aggregator_status_handler))
+        .route("/api/aggregator/start", post(aggregator_start_handler))
+        .route("/api/aggregator/restart", post(aggregator_restart_handler))
+        .route("/api/aggregator/stop", post(aggregator_stop_handler))
+        .route("/favicon.ico", get(favicon_handler))
+        .route_layer(middleware::from_fn_with_state(api_token.clone(), require_api_token));
     let app = if browser_ui {
         app.nest_service("/", ServeDir::new(ui_dir))
     } else {
@@ -1196,14 +1148,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .with_state(state);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], http_port));
     if browser_ui {
         println!("[HTTP] Browser UI enabled");
     } else {
         println!("[HTTP] Browser UI disabled (use --browser-ui or MESH_BROWSER_UI=1)");
     }
-    println!("Mesh Station daemon listening on http://{}", addr);
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    println!("Mesh Station daemon listening on http://{}", http_addr);
+    println!("[HTTP] API token loaded from MESH_API_TOKEN or data/api.token");
+    let listener = tokio::net::TcpListener::bind(http_addr).await?;
     axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await?;
 
     Ok(())
@@ -1216,6 +1168,8 @@ struct GossipMessage {
     msg_type: String,
     sender_did: String,
     #[serde(default)]
+    sender_type: String,
+    #[serde(default)]
     region: String,
     #[serde(default)]
     content: String,
@@ -1226,6 +1180,12 @@ struct GossipMessage {
     recipient_id: Option<String>,
     #[serde(default)]
     reply_to_broadcast: Option<String>,
+    #[serde(default)]
+    sender_public_key_hex: String,
+    #[serde(default)]
+    signature_hex: String,
+    #[serde(default)]
+    ai_tag: Option<String>,
 }
 
 fn spawn_gossip_listener(state: DaemonState) {
@@ -1254,25 +1214,21 @@ fn spawn_gossip_listener(state: DaemonState) {
                 "broadcast" => {
                     println!("[GOSSIP] Received broadcast from {}", msg.sender_did);
                     if let Some(message_id) = msg.message_id.as_deref() {
-                        let _ = state.db.insert_broadcast_with_id(
-                            message_id,
-                            &msg.region,
-                            &msg.sender_did,
-                            "node",
-                            &msg.content,
-                            None,
-                            Some("[P2P-GOSSIP]"),
-                            msg.timestamp,
-                        );
-                    } else {
-                        let _ = state.db.insert_broadcast(
-                            &msg.region,
-                            &msg.sender_did,
-                            "node",
-                            &msg.content,
-                            None,
-                            Some("[P2P-GOSSIP]"),
-                        );
+                        let broadcast = SecureBroadcast {
+                            id: message_id.to_string(),
+                            region: msg.region,
+                            sender_did: msg.sender_did,
+                            sender_type: msg.sender_type,
+                            content: msg.content,
+                            magnet_link: None,
+                            sender_public_key_hex: msg.sender_public_key_hex,
+                            signature_hex: msg.signature_hex,
+                            timestamp: msg.timestamp,
+                            ai_tag: msg.ai_tag,
+                        };
+                        if let Err(error) = state.db.upsert_broadcast(&broadcast) {
+                            eprintln!("[GOSSIP] Rejected unsigned or invalid broadcast: {error}");
+                        }
                     }
                 }
                 "direct_message" if msg.recipient_id.as_deref() == Some(state.peer_id.as_str()) => {
@@ -1295,12 +1251,16 @@ fn spawn_gossip_listener(state: DaemonState) {
                     let ack = GossipMessage {
                         msg_type: "direct_message_ack".to_string(),
                         sender_did: state.peer_id.clone(),
+                        sender_type: String::new(),
                         region: String::new(),
                         content: String::new(),
                         timestamp: unix_timestamp(),
                         message_id: Some(message_id),
                         recipient_id: Some(msg.sender_did),
                         reply_to_broadcast: None,
+                        sender_public_key_hex: String::new(),
+                        signature_hex: String::new(),
+                        ai_tag: None,
                     };
                     if let Ok(bytes) = serde_json::to_vec(&ack) {
                         let _ = state.socket.send_to(&bytes, addr).await;
@@ -1343,12 +1303,16 @@ fn spawn_presence_beacon(state: DaemonState) {
             let message = GossipMessage {
                 msg_type: "presence".to_string(),
                 sender_did: state.peer_id.clone(),
+                sender_type: String::new(),
                 region: String::new(),
                 content: String::new(),
                 timestamp: unix_timestamp(),
                 message_id: None,
                 recipient_id: None,
                 reply_to_broadcast: None,
+                sender_public_key_hex: String::new(),
+                signature_hex: String::new(),
+                ai_tag: None,
             };
             broadcast_packet(&state, &message).await;
         }
@@ -1358,20 +1322,21 @@ fn spawn_presence_beacon(state: DaemonState) {
 async fn gossip_forward_broadcast(
     state: &DaemonState,
     message_id: &str,
-    region: &str,
-    sender_did: &str,
-    content: &str,
-    timestamp: i64,
 ) {
+    let Ok(Some(broadcast)) = state.db.get_broadcast_by_id(message_id) else { return };
     let msg = GossipMessage {
         msg_type: "broadcast".to_string(),
-        sender_did: sender_did.to_string(),
-        region: region.to_string(),
-        content: content.to_string(),
-        timestamp,
+        sender_did: broadcast.sender_did,
+        sender_type: broadcast.sender_type,
+        region: broadcast.region,
+        content: broadcast.content,
+        timestamp: broadcast.timestamp,
         message_id: Some(message_id.to_string()),
         recipient_id: None,
         reply_to_broadcast: None,
+        sender_public_key_hex: broadcast.sender_public_key_hex,
+        signature_hex: broadcast.signature_hex,
+        ai_tag: broadcast.ai_tag,
     };
     broadcast_packet(state, &msg).await;
 }
@@ -1398,6 +1363,30 @@ fn new_broadcast_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bearer_auth_covers_sensitive_route_families_only() {
+        for path in [
+            "/api/dm",
+            "/api/dm/resend",
+            "/api/ai/models",
+            "/api/ai/chat",
+            "/api/aggregator/status",
+            "/api/aggregator/stop",
+        ] {
+            assert!(requires_api_auth(path), "{path} should require a bearer token");
+        }
+        for path in ["/api/broadcasts", "/api/rss/feeds", "/favicon.ico"] {
+            assert!(!requires_api_auth(path), "{path} should remain public");
+        }
+    }
+
+    #[test]
+    fn bearer_token_comparison_checks_full_value() {
+        assert!(constant_time_eq(b"token-value", b"token-value"));
+        assert!(!constant_time_eq(b"token-value", b"token-valuf"));
+        assert!(!constant_time_eq(b"token", b"token-value"));
+    }
 
     #[test]
     fn summary_messages_wrap_broadcast_as_untrusted_data() {
@@ -1438,13 +1427,13 @@ mod tests {
     #[test]
     fn feed_parser_reads_rss_and_atom_items() {
         let rss = "<rss><channel><item><title><![CDATA[Kernel 6.9 released]]></title><link>https://example.com/a</link></item></channel></rss>";
-        let items = parse_feed_items(rss);
+        let items = parse_feed_items(rss).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].title, "Kernel 6.9 released");
         assert_eq!(items[0].link, "https://example.com/a");
 
         let atom = "<feed><entry><title>Security advisory</title><link href=\"https://example.com/b\"/></entry></feed>";
-        let items = parse_feed_items(atom);
+        let items = parse_feed_items(atom).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].link, "https://example.com/b");
     }
@@ -1534,12 +1523,16 @@ mod tests {
         let presence = GossipMessage {
             msg_type: "presence".to_string(),
             sender_did: state_b.peer_id.clone(),
+            sender_type: String::new(),
             region: String::new(),
             content: String::new(),
             timestamp: unix_timestamp(),
             message_id: None,
             recipient_id: None,
             reply_to_broadcast: None,
+                sender_public_key_hex: String::new(),
+                signature_hex: String::new(),
+                ai_tag: None,
         };
         let bytes = serde_json::to_vec(&presence).unwrap();
         state_b.socket.send_to(&bytes, state_a.socket.local_addr().unwrap()).await.unwrap();

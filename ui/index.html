@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Aggregator P2P Web of Trust</title>
     <link rel="stylesheet" href="/tailwind.css">
+    <script src="/src/auth.js"></script>
+    <script src="/src/linkcheck.js"></script>
     <style>
     #tag-picker-btn { display: inline-flex; align-items: center; gap: 0.25rem; min-width: 0; max-width: 16rem; white-space: nowrap; overflow: hidden; }
     #tag-picker-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -58,12 +60,18 @@
                 rssIngestBtn.innerText = "Fetching...";
 
                 try {
-                    const res = await fetch('/api/rss/ingest', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ feed_url, region, tags: activeTags })
-                    });
-                    const data = await res.json();
+                    let data;
+                    if (window.__TAURI_INTERNALS__) {
+                        const count = await window.__TAURI_INTERNALS__.invoke('rss_ingest', { feedUrl: feed_url, region, tags: activeTags });
+                        data = { status: 'ok', count };
+                    } else {
+                        const res = await fetch('/api/rss/ingest', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ feed_url, region, tags: activeTags })
+                        });
+                        data = await res.json();
+                    }
                     if (data.status === 'ok') {
                         showToast(`Ingested ${data.count} items into ${region}`);
                         await loadDirectMessages();
@@ -73,7 +81,7 @@
                     }
                 } catch (err) {
                     console.error("RSS fetch error:", err);
-                    showToast("Error fetching RSS feed");
+                    showToast(`Error fetching RSS feed: ${err.message || err}`);
                 } finally {
                     rssIngestBtn.innerText = "Ingest RSS";
                 }
@@ -112,6 +120,9 @@
                     <button data-tab="tab-monitor" title="Feed Monitor" class="nav-tab-btn w-full text-left flex items-center space-x-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 text-sm cursor-pointer">
                         <span class="nav-icon" aria-hidden="true">🔎</span><span class="nav-label">Feed Monitor</span>
                     </button>
+                    <button data-tab="tab-relevant" title="Relevant Cards" class="nav-tab-btn w-full text-left flex items-center space-x-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 text-sm cursor-pointer">
+                        <span class="nav-icon" aria-hidden="true">🎯</span><span class="nav-label">Relevant</span><span id="sidebar-relevant-count" class="nav-badge">0</span>
+                    </button>
                     <button data-tab="tab-saved" title="Saved Cards" class="nav-tab-btn w-full text-left flex items-center space-x-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 text-sm cursor-pointer">
                         <span class="nav-icon" aria-hidden="true">🔖</span><span class="nav-label">Saved Cards</span><span id="sidebar-saved-count" class="nav-badge">0</span>
                     </button>
@@ -143,7 +154,7 @@
 
             <!-- Hardware & Telemetry Widget -->
             <div id="sidebar-telemetry" class="border-t border-slate-800 pt-3 space-y-2 text-xs font-mono">
-                <div class="text-slate-400 font-semibold uppercase text-[10px] tracking-wider mb-1">Server Hardware Monitor</div>
+                <div class="text-slate-400 font-semibold uppercase text-[10px] tracking-wider mb-1">This Computer</div>
                 
                 <div>
                     <div class="flex justify-between text-slate-400 text-[11px] mb-1">
@@ -181,6 +192,19 @@
         <main class="flex-1 overflow-y-auto p-6 bg-slate-950">
             <div class="max-w-3xl mx-auto">
                 
+                <!-- Aggregator service controls -->
+                <div id="aggregator-controls" class="flex items-center justify-between gap-3 mb-6 p-3 bg-slate-900 border border-slate-800 rounded-lg">
+                    <div class="flex items-center gap-2 text-xs font-mono text-slate-400">
+                        <span id="aggregator-status-light" class="w-2.5 h-2.5 rounded-full bg-slate-600" aria-hidden="true"></span>
+                        <span>Aggregator services: <span id="aggregator-status-text">checking...</span></span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button id="aggregator-start-btn" type="button" onclick="controlAggregator('start')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-xs rounded shadow transition cursor-pointer">Start Services</button>
+                        <button id="aggregator-restart-btn" type="button" onclick="controlAggregator('restart')" class="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white font-mono text-xs rounded shadow transition cursor-pointer">Restart Services</button>
+                        <button id="aggregator-stop-btn" type="button" onclick="controlAggregator('stop')" class="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white font-mono text-xs rounded shadow transition cursor-pointer">Stop Services</button>
+                    </div>
+                </div>
+
                 <!-- Tab 1: Mesh Comms -->
                 <div id="tab-comms" class="tab-content space-y-6">
                     <div class="flex justify-between items-center pb-4 border-b border-slate-800">
@@ -320,6 +344,27 @@
                     </div>
 
                     <div class="p-4 bg-slate-900 border border-slate-800 rounded-lg space-y-3">
+                        <h3 class="text-xs font-mono font-bold text-slate-300 uppercase tracking-wider">AI Server (this computer or your local network)</h3>
+                        <p class="text-xs text-slate-400 font-mono">Ollama address, for example 127.0.0.1 or 192.168.1.50:11434. No API keys are used.</p>
+                        <div class="flex items-center gap-2">
+                            <input id="ai-server-url" type="text" autocomplete="off" spellcheck="false" class="flex-1 bg-slate-950 border border-slate-800 rounded p-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-amber-500" placeholder="http://127.0.0.1:11434">
+                            <button id="ai-server-save-btn" type="button" class="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-mono text-xs rounded cursor-pointer">Save &amp; Test</button>
+                        </div>
+                        <div id="ai-server-status" class="text-xs font-mono text-slate-400"></div>
+                    </div>
+
+                    <div class="p-4 bg-slate-900 border border-slate-800 rounded-lg space-y-3">
+                        <h3 class="text-xs font-mono font-bold text-slate-300 uppercase tracking-wider">Automation (all off by default)</h3>
+                        <label class="flex items-center gap-2 text-xs font-mono text-slate-200 cursor-pointer">
+                            <input id="auto-ai-labeling" type="checkbox"> Let the AI write headlines for cards that match your Feed Monitor keywords
+                        </label>
+                        <label class="flex items-center gap-2 text-xs font-mono text-slate-200 cursor-pointer">
+                            <input id="auto-start-nodes" type="checkbox"> Start the three node services when this app opens
+                        </label>
+                        <div id="automation-status" class="text-xs font-mono text-slate-400"></div>
+                    </div>
+
+                    <div class="p-4 bg-slate-900 border border-slate-800 rounded-lg space-y-3">
                         <h3 class="text-xs font-mono font-bold text-slate-300 uppercase tracking-wider">Discovered Local LLM Engine Models</h3>
                         <div id="ai-models-list" class="grid grid-cols-2 gap-2 text-xs font-mono text-slate-300">
                             <div class="p-2 bg-slate-950 border border-slate-800 rounded">Querying Ollama API...</div>
@@ -342,6 +387,16 @@
                         </div>
                         <div id="ai-test-output" class="hidden p-3 bg-slate-950 border border-slate-800 rounded text-xs font-mono text-amber-300"></div>
                     </div>
+                </div>
+
+                <!-- Relevant: cards matching Feed Monitor keywords, labelled by the AI -->
+                <div id="tab-relevant" class="tab-content hidden space-y-6">
+                    <div class="pb-4 border-b border-slate-800">
+                        <h2 class="text-xl font-bold text-slate-100">Relevant Cards</h2>
+                        <p class="text-xs text-slate-400 font-mono">Cards that match your Feed Monitor keywords. AI headlines are off until you switch them on in Local AI Pipeline.</p>
+                    </div>
+                    <div id="relevant-status" class="text-xs font-mono text-slate-400"></div>
+                    <div id="relevant-container" class="space-y-3"></div>
                 </div>
 
                 <!-- Tab 4: Saved Reading List -->
@@ -378,7 +433,7 @@
                         <div class="flex flex-wrap gap-2">
                             <button onclick="setPresetFeed('https://news.ycombinator.com/rss', '#tech')" class="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-xs font-mono text-amber-400 rounded transition cursor-pointer">Hacker News</button>
                             <button onclick="setPresetFeed('https://feeds.bbci.co.uk/news/rss.xml', '#global')" class="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-xs font-mono text-blue-400 rounded transition cursor-pointer">BBC News</button>
-                            <button onclick="setPresetFeed('https://www.kernel.org/feeds/atom.xml', '#tech')" class="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-xs font-mono text-emerald-400 rounded transition cursor-pointer">Linux Kernel</button>
+                            <button onclick="setPresetFeed('https://www.kernel.org/feeds/kdist.xml', '#tech')" class="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-xs font-mono text-emerald-400 rounded transition cursor-pointer">Linux Kernel</button>
                             <button onclick="setPresetFeed('https://www.reddit.com/r/linux/.rss', '#tech')" class="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-xs font-mono text-purple-400 rounded transition cursor-pointer">r/linux</button>
                         </div>
                     </div>
@@ -783,9 +838,23 @@
 
         const APP_LABELS = { qbittorrent: 'qBittorrent', vlc: 'VLC' };
 
+        // The desktop webview ignores target="_blank", so open external links in the system browser.
+        document.addEventListener('click', (event) => {
+            const link = event.target.closest('a[target="_blank"]');
+            if (!link || !window.__TAURI_INTERNALS__) return;
+            event.preventDefault();
+            window.__TAURI_INTERNALS__.invoke('open_url', { url: link.href })
+                .catch(err => showToast(`Could not open link: ${err}`));
+        });
+
         async function launchApp(app) {
             const label = APP_LABELS[app] || app;
             try {
+                if (window.__TAURI_INTERNALS__) {
+                    await window.__TAURI_INTERNALS__.invoke('launch_app', { app });
+                    showToast(`${label} opened`);
+                    return;
+                }
                 const res = await fetch('/api/apps/launch', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -798,6 +867,52 @@
                 showToast(`Could not open ${label}: ${err.message}`);
             }
         }
+
+        // Tauri 2 injects __TAURI_INTERNALS__ without withGlobalTauri.
+        async function fetchAggregatorStatus() {
+            if (window.__TAURI_INTERNALS__) return window.__TAURI_INTERNALS__.invoke('aggregator_status');
+            const res = await window.meshApiFetch('/api/aggregator/status');
+            return res.json();
+        }
+
+        async function refreshAggregatorStatus() {
+            const text = document.getElementById('aggregator-status-text');
+            const light = document.getElementById('aggregator-status-light');
+            if (!text || !light) return;
+            try {
+                const states = await fetchAggregatorStatus();
+                const total = Object.keys(states).length;
+                const values = Object.values(states);
+                const running = values.filter(s => s === 'active').length;
+                const failed = values.filter(s => s === 'failed').length;
+                text.innerText = `${running}/${total} running${failed ? `, ${failed} failed` : ''}`;
+                light.className = `w-2.5 h-2.5 rounded-full ${running === total ? 'bg-emerald-500' : running ? 'bg-amber-500' : 'bg-slate-600'}`;
+            } catch (err) {
+                text.innerText = 'status unavailable';
+            }
+        }
+
+        async function controlAggregator(action) {
+            try {
+                if (window.__TAURI_INTERNALS__) {
+                    await window.__TAURI_INTERNALS__.invoke('aggregator_control', { action });
+                } else {
+                    const res = await window.meshApiFetch(`/api/aggregator/${action}`, { method: 'POST' });
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+                }
+                const past = { start: 'started', restart: 'restarted', stop: 'stopped' };
+                showToast(`Aggregator services ${past[action]}`);
+            } catch (err) {
+                showToast(`Could not ${action} services: ${err.message || err}`);
+            }
+            refreshAggregatorStatus();
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            refreshAggregatorStatus();
+            setInterval(refreshAggregatorStatus, 5000);
+        });
 
         function copyAddress(value, label) {
             const field = document.createElement('textarea');
@@ -1029,12 +1144,18 @@
             if (btn) btn.innerText = "⚡ Summarizing...";
 
             try {
-                const res = await fetch('/api/ai/summarize', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ id, content, model: selectedModel })
-                });
-                const data = await res.json();
+                let data;
+                if (window.__TAURI_INTERNALS__) {
+                    const summary = await window.__TAURI_INTERNALS__.invoke('local_ai_summarize', { content, model: selectedModel });
+                    data = { status: 'ok', summary };
+                } else {
+                    const res = await window.meshApiFetch('/api/ai/summarize', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ id, content, model: selectedModel })
+                    });
+                    data = await res.json();
+                }
                 if (data.status === 'ok' && summaryBox) {
                     aiSummaries.set(String(id), data.summary);
                     summaryBox.classList.remove('hidden');
@@ -1056,8 +1177,9 @@
 
         async function fetchAiModels() {
             try {
-                const res = await fetch('/api/ai/models');
-                const data = await res.json();
+                const data = window.__TAURI_INTERNALS__
+                    ? await window.__TAURI_INTERNALS__.invoke('local_ai_models')
+                    : await (await window.meshApiFetch('/api/ai/models')).json();
                 if (data.models && Array.isArray(data.models)) {
                     availableModels = data.models;
                     
@@ -1076,16 +1198,69 @@
                     if (sel2) sel2.value = selectedModel;
 
                     renderModelCards();
+                    setAiServerStatus(`Connected. ${availableModels.length} model(s) found.`, false);
                 }
             } catch (e) {
                 console.warn('Could not fetch Ollama models:', e);
+                setAiServerStatus(String(e.message || e), true);
+            }
+        }
+
+        function setAiServerStatus(text, isError) {
+            const el = document.getElementById('ai-server-status');
+            if (!el) return;
+            el.textContent = text;
+            el.classList.toggle('text-red-400', isError);
+        }
+
+        async function loadAiSettings() {
+            const input = document.getElementById('ai-server-url');
+            if (!input) return;
+            if (!window.__TAURI_INTERNALS__) {
+                input.disabled = true;
+                setAiServerStatus('AI server settings are available in the desktop app.', false);
+                return;
+            }
+            input.value = await window.__TAURI_INTERNALS__.invoke('ai_settings_get');
+            const automation = await window.__TAURI_INTERNALS__.invoke('automation_get');
+            document.getElementById('auto-ai-labeling').checked = automation.ai_labeling;
+            document.getElementById('auto-start-nodes').checked = automation.auto_start_nodes;
+        }
+
+        async function saveAutomation() {
+            if (!window.__TAURI_INTERNALS__) return;
+            const settings = {
+                ai_labeling: document.getElementById('auto-ai-labeling').checked,
+                auto_start_nodes: document.getElementById('auto-start-nodes').checked,
+            };
+            const status = document.getElementById('automation-status');
+            try {
+                await window.__TAURI_INTERNALS__.invoke('automation_save', { settings });
+                status.classList.remove('text-red-400');
+                status.textContent = 'Saved.';
+            } catch (e) {
+                status.classList.add('text-red-400');
+                status.textContent = String(e);
+            }
+        }
+
+        async function saveAiSettings() {
+            const input = document.getElementById('ai-server-url');
+            if (!input || !window.__TAURI_INTERNALS__) return;
+            try {
+                input.value = await window.__TAURI_INTERNALS__.invoke('ai_settings_save', { url: input.value });
+                setAiServerStatus('Saved. Testing connection...', false);
+                await fetchAiModels();
+            } catch (e) {
+                setAiServerStatus(String(e.message || e), true);
             }
         }
 
         async function fetchTelemetry() {
             try {
-                const res = await fetch('/api/telemetry');
-                const data = await res.json();
+                const data = window.__TAURI_INTERNALS__
+                    ? await window.__TAURI_INTERNALS__.invoke('local_telemetry')
+                    : await (await fetch('/api/telemetry')).json();
                 document.getElementById('telemetry-cpu').innerText = `${data.cpu_usage_pct}%`;
                 document.getElementById('bar-cpu').style.width = `${data.cpu_usage_pct}%`;
 
@@ -1166,8 +1341,17 @@
         }
 
         async function loadDirectMessages() {
+            if (window.__TAURI_INTERNALS__) {
+                const status = document.getElementById('dm-send-status');
+                const sendButton = document.getElementById('send-dm-btn');
+                const inbox = document.getElementById('dm-inbox-container');
+                if (status) status.textContent = 'Direct messaging requires the separate mesh HTTP daemon.';
+                if (sendButton) sendButton.disabled = true;
+                if (inbox) inbox.textContent = 'Direct messages are unavailable in desktop-only mode.';
+                return;
+            }
             try {
-                const res = await fetch('/api/dm');
+                const res = await window.meshApiFetch('/api/dm');
                 if (!res.ok) throw new Error(`Inbox request failed (${res.status})`);
                 const data = await res.json();
                 const nextMessages = Array.isArray(data) ? data : (data.messages || []);
@@ -1183,6 +1367,11 @@
         }
 
         async function sendDirectMessage() {
+            if (window.__TAURI_INTERNALS__) {
+                const status = document.getElementById('dm-send-status');
+                if (status) status.textContent = 'Direct messaging requires the separate mesh HTTP daemon.';
+                return;
+            }
             const recipientId = document.getElementById('dm-recipient-input').value.trim();
             const content = document.getElementById('dm-input').value.trim();
             const replyToBroadcast = document.getElementById('dm-reply-to-input').value.trim();
@@ -1200,7 +1389,7 @@
             }
 
             try {
-                const res = await fetch('/api/dm', {
+                const res = await window.meshApiFetch('/api/dm', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ recipient_id: recipientId, content, reply_to_broadcast: replyToBroadcast || null, queue_ttl_seconds: queueTtlSeconds, max_retries: maxRetries })
@@ -1234,8 +1423,12 @@
         }
 
         async function resendDirectMessage(messageId) {
+            if (window.__TAURI_INTERNALS__) {
+                showToast('Direct messaging requires the separate mesh HTTP daemon');
+                return;
+            }
             try {
-                const res = await fetch('/api/dm/resend', {
+                const res = await window.meshApiFetch('/api/dm/resend', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ id: messageId })
@@ -1294,13 +1487,35 @@
 
         async function fetchBroadcasts() {
             try {
-                const res = await fetch('/api/broadcasts');
-                const data = await res.json();
+                const data = window.__TAURI_INTERNALS__
+                    ? await window.__TAURI_INTERNALS__.invoke('fetch_mesh_broadcasts')
+                    : await (await fetch('/api/broadcasts')).json();
                 allBroadcasts = Array.isArray(data) ? data : (data.broadcasts || []);
                 renderBroadcasts();
             } catch (err) {
                 console.error('Failed to load broadcasts:', err);
             }
+        }
+
+        // Link button for a card: opens the tracker-free URL and shows what was removed or looks risky.
+        function linkButtonsHtml(url) {
+            const check = analyzeLink(url);
+            const openUrl = check.valid ? check.cleanUrl : url;
+            let text;
+            try {
+                const parsed = new URL(openUrl);
+                text = parsed.hostname.replace('www.', '') + parsed.pathname + parsed.search;
+            } catch (e) {
+                text = openUrl.replace(/^https?:\/\//, '');
+            }
+            const badgeClass = 'px-2 py-0.5 text-[10px] font-mono rounded border';
+            const parts = [`<a href="${escapeHtml(openUrl)}" target="_blank" rel="noopener noreferrer" class="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white font-mono text-xs rounded transition flex items-center space-x-1 max-w-full break-all"><span>🔗 ${escapeHtml(text)}</span></a>`];
+            if (check.removed.length) {
+                parts.push(`<span title="Removed: ${escapeHtml(check.removed.join(', '))}" class="${badgeClass} text-amber-400">🧹 ${check.removed.length} tracker${check.removed.length > 1 ? 's' : ''} removed</span>`);
+                parts.push(`<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" class="text-[10px] font-mono text-slate-400 hover:underline">open original</a>`);
+            }
+            check.flags.forEach(flag => parts.push(`<span title="${escapeHtml(flag)}" class="${badgeClass} text-red-400">⚠ ${escapeHtml(flag)}</span>`));
+            return parts.join('');
         }
 
                         function renderBroadcasts() {
@@ -1334,23 +1549,6 @@
 
                 const urlMatch = (b.content || '').match(/(https?:\/\/[^\s]+)/);
                 let extractedUrl = urlMatch ? urlMatch[0].replace(/[.,;!?)>\x27\"]$/, '') : null;
-                
-                if (extractedUrl && extractedUrl.includes('at_medium=')) {
-                    extractedUrl = extractedUrl.split('?')[0];
-                }
-
-                let displayLinkText = 'Open Link';
-                if (extractedUrl) {
-                    try {
-                        const parsed = new URL(extractedUrl);
-                        displayLinkText = parsed.hostname.replace('www.', '') + parsed.pathname;
-                        if (displayLinkText.length > 35) {
-                            displayLinkText = displayLinkText.substring(0, 32) + '...';
-                        }
-                    } catch(e) {
-                        displayLinkText = extractedUrl.replace(/^https?:\/\//, '');
-                    }
-                }
 
                 let cleanContent = (b.content || '').replace(/<!\[CDATA\[([^\]]+)\]\]>/g, '$1');
                 if (extractedUrl) {
@@ -1387,19 +1585,15 @@
                                 Reply privately
                             </button>
                         ` : ''}
-                        ${extractedUrl ? `
-                            <a href="${extractedUrl}" target="_blank" rel="noopener noreferrer" class="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white font-mono text-xs rounded transition flex items-center space-x-1">
-                                <span>🔗 ${displayLinkText}</span>
-                            </a>
-                        ` : ''}
+                        <button onclick="toggleSaveCard('${b.id}')" class="px-2.5 py-1 ${isSaved ? 'bg-purple-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'} font-mono text-xs rounded transition cursor-pointer">
+                            ${isSaved ? '🔖 Saved' : '📌 Save Card'}
+                        </button>
+                        ${extractedUrl ? linkButtonsHtml(extractedUrl) : ''}
                         ${magnetUrl ? `
                             <button onclick="ingestMagnet('${magnetUrl}')" class="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-xs rounded transition cursor-pointer">
                                 🧲 Copy Magnet URI
                             </button>
                         ` : ''}
-                        <button onclick="toggleSaveCard('${b.id}')" class="px-2.5 py-1 ${isSaved ? 'bg-purple-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'} font-mono text-xs rounded transition cursor-pointer">
-                            ${isSaved ? '🔖 Saved' : '📌 Save Card'}
-                        </button>
                     </div>
                 </div>
             `;
@@ -1504,15 +1698,19 @@
                     if (!content) return;
 
                     try {
-                        const res = await fetch('/api/broadcasts', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ region, content, sender_type })
-                        });
-                        if (!res.ok) {
-                            const error = await res.text();
-                            showToast(error || `Broadcast failed (${res.status})`);
-                            return;
+                        if (window.__TAURI_INTERNALS__) {
+                            await window.__TAURI_INTERNALS__.invoke('post_broadcast', { region, content, senderType: sender_type });
+                        } else {
+                            const res = await fetch('/api/broadcasts', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ region, content, sender_type })
+                            });
+                            if (!res.ok) {
+                                const error = await res.text();
+                                showToast(error || `Broadcast failed (${res.status})`);
+                                return;
+                            }
                         }
                         input.value = '';
                         updateBroadcastByteCount();
@@ -1520,6 +1718,7 @@
                         fetchBroadcasts();
                     } catch (err) {
                         console.error('Failed to transmit broadcast:', err);
+                        showToast(`Broadcast failed: ${err.message || err}`);
                     }
                 });
             }
@@ -1536,19 +1735,27 @@ aiRunBtn.addEventListener('click', async () => {
                     out.innerText = `Running inference with ${selectedModel}...`;
 
                     try {
-                        const res = await fetch('/api/ai/summarize', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ id: "test", content: promptText, model: selectedModel })
-                        });
-                        const data = await res.json();
-                        out.innerText = data.summary || "No response";
+                        if (window.__TAURI_INTERNALS__) {
+                            out.innerText = await window.__TAURI_INTERNALS__.invoke('local_ai_chat', { prompt: promptText, model: selectedModel });
+                        } else {
+                            const res = await window.meshApiFetch('/api/ai/summarize', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ id: "test", content: promptText, model: selectedModel })
+                            });
+                            const data = await res.json();
+                            out.innerText = data.summary || "No response";
+                        }
                     } catch (e) {
                         out.innerText = "Error running local model.";
                     }
                 });
             }
 
+            loadAiSettings();
+            document.getElementById('ai-server-save-btn')?.addEventListener('click', saveAiSettings);
+            document.getElementById('auto-ai-labeling')?.addEventListener('change', saveAutomation);
+            document.getElementById('auto-start-nodes')?.addEventListener('change', saveAutomation);
             fetchAiModels();
             Promise.all([loadIdentity(), fetchPeers()]).then(() => {
                 fetchBroadcasts();
@@ -1602,10 +1809,43 @@ aiRunBtn.addEventListener('click', async () => {
             }).join('');
         }
 
+        async function loadRelevant() {
+            const container = document.getElementById('relevant-container');
+            const status = document.getElementById('relevant-status');
+            if (!container) return;
+            if (!window.__TAURI_INTERNALS__) {
+                status.textContent = 'Relevant cards are available in the desktop app.';
+                return;
+            }
+            try {
+                const cards = await window.__TAURI_INTERNALS__.invoke('relevant_list');
+                const badge = document.getElementById('sidebar-relevant-count');
+                if (badge) badge.textContent = cards.length;
+                status.textContent = cards.length ? '' : 'Nothing yet. Add keywords in Feed Monitor and matching cards will appear here.';
+                container.innerHTML = cards.map(card => {
+                    const urlMatch = (card.content || '').match(/(https?:\/\/[^\s]+)/);
+                    const url = urlMatch ? urlMatch[0].replace(/[.,;!?)>\x27\"]$/, '') : null;
+                    return `
+                    <div class="p-4 bg-slate-900 border border-slate-800 rounded-lg shadow-md space-y-2">
+                        <div class="flex items-center justify-between">
+                            <span class="px-2 py-0.5 text-[10px] font-mono rounded border text-amber-400">keyword: ${escapeHtml(card.matched_keyword)}</span>
+                            <span class="text-xs font-mono text-slate-400">${escapeHtml(card.region)} · ${new Date(card.timestamp * 1000).toLocaleString()}</span>
+                        </div>
+                        <h3 class="text-sm font-bold text-slate-100">${escapeHtml(card.headline)}</h3>
+                        <p class="text-xs font-mono text-slate-400">${card.ai_ok ? '🤖 ' : ''}${escapeHtml(card.reason)}</p>
+                        <div class="flex flex-wrap items-center gap-2 pt-1">${url ? linkButtonsHtml(url) : ''}</div>
+                    </div>`;
+                }).join('');
+            } catch (e) {
+                status.textContent = `Could not load relevant cards: ${e}`;
+            }
+        }
+
         async function loadMonitor() {
             try {
-                const res = await fetch('/api/monitor');
-                const data = await res.json();
+                const data = window.__TAURI_INTERNALS__
+                    ? await window.__TAURI_INTERNALS__.invoke('monitor_get')
+                    : await (await fetch('/api/monitor')).json();
 
                 if (!monitorRulesLoaded) {
                     document.getElementById('monitor-feeds').value = (data.config.feeds || []).join('\n');
@@ -1631,26 +1871,34 @@ aiRunBtn.addEventListener('click', async () => {
                 sender_ids: splitMonitorList(document.getElementById('monitor-senders').value, false),
             };
             try {
-                const res = await fetch('/api/monitor/config', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload),
-                });
-                const data = await res.json();
-                if (!res.ok || data.status !== 'ok') {
-                    showToast(data.message || 'Failed to save monitor rules');
-                    return;
+                if (window.__TAURI_INTERNALS__) {
+                    await window.__TAURI_INTERNALS__.invoke('monitor_save_config', { config: payload });
+                } else {
+                    const res = await fetch('/api/monitor/config', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                    });
+                    const data = await res.json();
+                    if (!res.ok || data.status !== 'ok') {
+                        showToast(data.message || 'Failed to save monitor rules');
+                        return;
+                    }
                 }
                 showToast('Monitor rules saved');
                 loadMonitor();
             } catch (err) {
-                showToast('Failed to save monitor rules');
+                showToast(typeof err === 'string' ? err : 'Failed to save monitor rules');
             }
         }
 
         async function clearMonitorAlerts() {
             try {
-                await fetch('/api/monitor/alerts/clear', { method: 'POST' });
+                if (window.__TAURI_INTERNALS__) {
+                    await window.__TAURI_INTERNALS__.invoke('monitor_clear_alerts');
+                } else {
+                    await fetch('/api/monitor/alerts/clear', { method: 'POST' });
+                }
                 loadMonitor();
             } catch (err) {
                 showToast('Failed to clear alerts');
@@ -1661,6 +1909,9 @@ aiRunBtn.addEventListener('click', async () => {
         document.getElementById('monitor-refresh-btn').addEventListener('click', loadMonitor);
         document.getElementById('monitor-clear-btn').addEventListener('click', clearMonitorAlerts);
         document.querySelector('.nav-tab-btn[data-tab="tab-monitor"]').addEventListener('click', loadMonitor);
+        document.querySelector('.nav-tab-btn[data-tab="tab-relevant"]').addEventListener('click', loadRelevant);
+        loadRelevant();
+        setInterval(loadRelevant, 30000);
         document.querySelector('.nav-tab-btn[data-tab="tab-about"]').addEventListener('click', loadAbout);
 
         // Refresh alerts every 30 s while the tab is open. Rules are only loaded once so unsaved edits are kept.

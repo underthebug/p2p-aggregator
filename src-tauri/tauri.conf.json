@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "identifier": "com.p2p.aggregator",
   "build": {
-    "frontendDist": "../ui"
+    "frontendDist": "../ui",
+    "beforeBundleCommand": "cargo build --manifest-path Cargo.toml --release --bin p2p-aggregator --target-dir target"
   },
   "app": {
     "windows": [
@@ -26,6 +27,16 @@
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.png"
-    ]
+    ],
+    "linux": {
+      "deb": {
+        "files": {
+          "/usr/bin/p2p-aggregator": "../target/release/p2p-aggregator",
+          "/usr/lib/systemd/user/p2p-desktop-node1.service": "../p2p-aggregator.service",
+          "/usr/lib/systemd/user/p2p-desktop-node2.service": "../p2p-aggregator-node2.service",
+          "/usr/lib/systemd/user/p2p-desktop-node3.service": "../p2p-aggregator-node3.service"
+        }
+      }
+    }
   }
 }

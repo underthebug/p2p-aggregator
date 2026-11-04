@@ -1,4 +1,4 @@
-use p2p_aggregator::journal::sqlite::{ensure_journal_table, is_recorded, record_transaction};
+use p2p_aggregator::journal::sqlite::{is_recorded, record_transaction};
 use rusqlite::{Connection, Result};
 use sha2::{Digest, Sha256};
 
@@ -9,40 +9,7 @@ pub struct StateDatabase {
 impl StateDatabase {
     pub fn new(path: &str) -> Result<Self> {
         let conn = Connection::open(path)?;
-
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS feed_cards (
-                id TEXT PRIMARY KEY,
-                author_peer_id TEXT NOT NULL,
-                title TEXT NOT NULL,
-                url TEXT NOT NULL,
-                summary TEXT NOT NULL,
-                magnet_link TEXT,
-                timestamp INTEGER NOT NULL
-            )",
-            [],
-        )?;
-
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS votes (
-                card_id TEXT NOT NULL,
-                voter_peer_id TEXT NOT NULL,
-                direction INTEGER NOT NULL,
-                PRIMARY KEY (card_id, voter_peer_id)
-            )",
-            [],
-        )?;
-
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS outbox (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                msg_json TEXT NOT NULL,
-                status TEXT DEFAULT 'pending'
-            )",
-            [],
-        )?;
-
-        ensure_journal_table(&conn)?;
+        p2p_aggregator::migrations::migrate(&conn)?;
 
         Ok(Self { conn })
     }
