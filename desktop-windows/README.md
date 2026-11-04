@@ -44,6 +44,20 @@ installer under `src-tauri\target\release\bundle`.
 The UI is static HTML; its optional Tailwind CSS build tooling is declared in
 `ui\package.json`.
 
+## Releasing
+
+Add a `## <version>` section to `CHANGELOG.md`, then run:
+
+```powershell
+.\release.ps1 -Version 0.2.1 -GitDir <path to your git checkout>
+```
+
+The script sets the version in all three files, runs the tests, builds,
+stages the exes, writes `dist\windows-v<version>\` (zip plus `SHA256SUMS.txt`),
+commits, tags, pushes and creates the GitHub Release. It needs Git and a
+signed-in GitHub CLI (`gh auth login`). Add `-DryRun` to build and package
+without publishing; `-SkipTests` and `-SkipBuild` speed up dry runs.
+
 ## Direct-message encryption
 
 The mesh HTTP daemon encrypts direct-message content with ephemeral X25519
