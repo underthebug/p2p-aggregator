@@ -1,4 +1,4 @@
-use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
+use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
 use chacha20poly1305::{
     aead::{Aead, Payload},
     ChaCha20Poly1305, KeyInit, Nonce,

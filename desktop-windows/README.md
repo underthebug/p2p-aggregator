@@ -10,10 +10,12 @@ Windows SDK, and the WebView2 Runtime. Install the Tauri CLI to build the
 desktop app; install NSIS as well if you want to produce the configured
 installer.
 
-From `desktop-windows`, build the node and daemon binaries and stage them for
-Tauri:
+From `desktop-windows`, install the Tauri CLI and build the node and daemon
+binaries, then stage them for Tauri:
 
 ```powershell
+npm install
+
 Push-Location core
 cargo build --release --bin p2p-aggregator
 Pop-Location
@@ -27,15 +29,16 @@ Copy-Item core\target\release\p2p-aggregator.exe stage\
 Copy-Item src-tauri\target\release\p2p-daemon.exe stage\
 
 Push-Location src-tauri
-cargo tauri build
+& ..\node_modules\.bin\tauri.cmd build --no-bundle
 Pop-Location
 ```
 
 The desktop executable is under `src-tauri\target\release`. When NSIS is
-installed, Tauri also creates the installer under `src-tauri\target\release\bundle`.
+installed, run `& ..\node_modules\.bin\tauri.cmd build --bundles nsis`
+instead to also create the installer under `src-tauri\target\release\bundle`.
 
-The UI is static HTML and does not require an npm install to build the app.
-The optional Tailwind CSS build uses the dependencies declared in `ui\package.json`.
+The UI is static HTML; its optional Tailwind CSS build tooling is declared in
+`ui\package.json`.
 
 ## Direct-message encryption
 

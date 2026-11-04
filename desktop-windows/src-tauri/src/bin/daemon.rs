@@ -15,6 +15,7 @@ use p2p_desktop_lib::monitor::{
     CONFIG_PATH as MONITOR_CONFIG_PATH, POLL_SECS as MONITOR_POLL_SECS,
 };
 use p2p_desktop_lib::rss;
+#[path = "../direct_message_crypto.rs"]
 mod direct_message_crypto;
 #[cfg(test)]
 use p2p_desktop_lib::monitor::{match_keyword, BoundedSeen};

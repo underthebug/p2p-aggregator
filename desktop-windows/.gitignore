@@ -1,5 +1,6 @@
 core/target/
 src-tauri/target/
+node_modules/
 stage/
 dist/
 *.db
