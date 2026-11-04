@@ -1,6 +1,7 @@
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::rngs::OsRng;
 use rusqlite::{params, Connection, OptionalExtension, Result};
+use sha2::{Digest, Sha512};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;
@@ -54,6 +55,17 @@ impl DbManager {
             load_or_create_signing_key(&path.with_extension("key"))?
         };
         Ok(Self { conn: Arc::new(Mutex::new(conn)), signing_key })
+    }
+
+    pub fn sign_message(&self, message: &[u8]) -> [u8; 64] {
+        self.signing_key.sign(message).to_bytes()
+    }
+
+    pub fn encryption_secret(&self) -> [u8; 32] {
+        let expanded = Sha512::digest(self.signing_key.to_bytes());
+        let mut secret = [0u8; 32];
+        secret.copy_from_slice(&expanded[..32]);
+        secret
     }
 
     pub fn upsert_broadcast(&self, b: &SecureBroadcast) -> Result<()> {

@@ -258,8 +258,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             }
                             // Voting is retired: it generated too much traffic, so votes are ignored.
                             SwarmMessage::Vote { .. } => {}
-                            SwarmMessage::DirectMessage { sender_peer_id, content, .. } => {
-                                println!("\n💬 [NODE {}] [DM from {}]: {}", port, sender_peer_id, content);
+                            SwarmMessage::DirectMessage { .. } => {
+                                eprintln!("[NODE {}] Rejected legacy unencrypted direct message", port);
                             }
                         }
                     }

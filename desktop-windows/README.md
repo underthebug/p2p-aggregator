@@ -37,5 +37,20 @@ installed, Tauri also creates the installer under `src-tauri\target\release\bund
 The UI is static HTML and does not require an npm install to build the app.
 The optional Tailwind CSS build uses the dependencies declared in `ui\package.json`.
 
+## Direct-message encryption
+
+The mesh HTTP daemon encrypts direct-message content with ephemeral X25519
+key agreement and ChaCha20-Poly1305, then signs each encrypted envelope with
+the sender's Ed25519 identity. Encryption keys are derived from the existing
+persistent identity, so recipients can authenticate messages using the peer ID
+shown on broadcasts. Plaintext legacy direct messages are rejected.
+
+Message content and broadcast replies are encrypted; sender/recipient IDs,
+message IDs, timestamps, and delivery acknowledgements remain visible to the
+network. The daemon keeps plaintext only at the sending and receiving
+endpoints. As the recipient encryption key is long-lived, a later compromise
+of that identity key could expose previously captured messages. This is not a
+replacement for a forward-secret ratcheting protocol.
+
 For Linux cross-compilation, see `build-windows.sh` for the required `cargo-xwin`
 and LLVM toolchain.

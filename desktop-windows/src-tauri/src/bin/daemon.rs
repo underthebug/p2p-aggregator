@@ -15,6 +15,7 @@ use p2p_desktop_lib::monitor::{
     CONFIG_PATH as MONITOR_CONFIG_PATH, POLL_SECS as MONITOR_POLL_SECS,
 };
 use p2p_desktop_lib::rss;
+mod direct_message_crypto;
 #[cfg(test)]
 use p2p_desktop_lib::monitor::{match_keyword, BoundedSeen};
 #[cfg(test)]
@@ -34,6 +35,7 @@ use tower_http::services::ServeDir;
 const MAX_PENDING_DIRECT_MESSAGES: usize = 1000;
 const MAX_BROADCAST_BYTES: usize = 3000;
 const MAX_DIRECT_MESSAGE_BYTES: usize = 3000;
+const MAX_DM_REPLY_REFERENCE_BYTES: usize = 512;
 const DM_RETRY_INTERVAL: Duration = Duration::from_secs(15);
 const DM_DEFAULT_RETRIES: u32 = 3;
 const MAX_DM_RETRIES: u32 = 10;
@@ -237,7 +239,8 @@ async fn get_identity(State(state): State<DaemonState>) -> impl IntoResponse {
     Json(serde_json::json!({
         "peer_id": state.peer_id,
         "transport": "lan-udp",
-        "encrypted": false
+        "encrypted": true,
+        "encryption": direct_message_crypto::ENCRYPTION_VERSION
     }))
 }
 
@@ -263,6 +266,16 @@ async fn post_direct_message(
         return (
             StatusCode::PAYLOAD_TOO_LARGE,
             Json(serde_json::json!({ "error": "Direct replies are limited to 3000 bytes. Share larger media using torrent instead." })),
+        );
+    }
+    if payload
+        .reply_to_broadcast
+        .as_deref()
+        .is_some_and(|reference| reference.len() > MAX_DM_REPLY_REFERENCE_BYTES)
+    {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(serde_json::json!({ "error": "Broadcast references are limited to 512 bytes." })),
         );
     }
     if recipient_id == state.peer_id {
@@ -302,12 +315,12 @@ async fn post_direct_message(
         attempts: 0,
         max_attempts,
     };
-    let bytes = match encode_direct_message(&record) {
+    let bytes = match encode_direct_message(&record, &state.db) {
         Ok(bytes) => bytes,
         Err(err) => {
             return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": err.to_string() })),
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": err })),
             );
         }
     };
@@ -377,22 +390,32 @@ fn find_direct_message_mut<'a>(messages: &'a mut [DirectMessageRecord], id: &str
     messages.iter_mut().find(|message| message.id == id)
 }
 
-fn encode_direct_message(record: &DirectMessageRecord) -> Result<Vec<u8>, serde_json::Error> {
+fn encode_direct_message(record: &DirectMessageRecord, db: &DbManager) -> Result<Vec<u8>, String> {
+    let encrypted = direct_message_crypto::encrypt(
+        db,
+        &record.id,
+        &record.sender_id,
+        &record.recipient_id,
+        record.timestamp,
+        record.reply_to_broadcast.as_deref(),
+        &record.content,
+    )?;
     let message = GossipMessage {
         msg_type: "direct_message".to_string(),
         sender_did: record.sender_id.clone(),
-        sender_type: String::new(),
+        sender_type: direct_message_crypto::ENCRYPTION_VERSION.to_string(),
         region: String::new(),
-        content: record.content.clone(),
+        content: encrypted.ciphertext,
         timestamp: record.timestamp,
         message_id: Some(record.id.clone()),
         recipient_id: Some(record.recipient_id.clone()),
-        reply_to_broadcast: record.reply_to_broadcast.clone(),
-        sender_public_key_hex: String::new(),
-        signature_hex: String::new(),
+        reply_to_broadcast: None,
+        sender_public_key_hex: encrypted.ephemeral_public_key_hex,
+        signature_hex: encrypted.signature_hex,
+        encryption_nonce_hex: encrypted.nonce_hex,
         ai_tag: None,
     };
-    serde_json::to_vec(&message)
+    serde_json::to_vec(&message).map_err(|err| err.to_string())
 }
 
 fn direct_message_key(recipient_id: &str, content: &str, reply_to_broadcast: Option<&str>) -> String {
@@ -488,12 +511,12 @@ async fn resend_direct_message(
             Json(serde_json::json!({ "error": "Only replies you sent can be resent." })),
         );
     }
-    let bytes = match encode_direct_message(&record) {
+    let bytes = match encode_direct_message(&record, &state.db) {
         Ok(bytes) => bytes,
         Err(err) => {
             return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": err.to_string() })),
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": err })),
             );
         }
     };
@@ -1189,13 +1212,15 @@ struct GossipMessage {
     #[serde(default)]
     signature_hex: String,
     #[serde(default)]
+    encryption_nonce_hex: String,
+    #[serde(default)]
     ai_tag: Option<String>,
 }
 
 fn spawn_gossip_listener(state: DaemonState) {
     tokio::spawn(async move {
         println!("[GOSSIP] Peer gossip socket listening on UDP port {}", state.gossip_port);
-        let mut buf = [0u8; 4096];
+        let mut buf = [0u8; 8192];
 
         loop {
             let (len, addr) = match state.socket.recv_from(&mut buf).await {
@@ -1237,12 +1262,33 @@ fn spawn_gossip_listener(state: DaemonState) {
                 }
                 "direct_message" if msg.recipient_id.as_deref() == Some(state.peer_id.as_str()) => {
                     let Some(message_id) = msg.message_id.clone() else { continue };
+                    if msg.sender_type != direct_message_crypto::ENCRYPTION_VERSION {
+                        eprintln!("[GOSSIP] Rejected unencrypted direct message from {}", msg.sender_did);
+                        continue;
+                    }
+                    let decrypted = match direct_message_crypto::decrypt(
+                        &state.db,
+                        &message_id,
+                        &msg.sender_did,
+                        &state.peer_id,
+                        msg.timestamp,
+                        &msg.sender_public_key_hex,
+                        &msg.encryption_nonce_hex,
+                        &msg.content,
+                        &msg.signature_hex,
+                    ) {
+                        Ok(payload) => payload,
+                        Err(error) => {
+                            eprintln!("[GOSSIP] Rejected invalid encrypted direct message: {error}");
+                            continue;
+                        }
+                    };
                     let record = DirectMessageRecord {
                         id: message_id.clone(),
                         sender_id: msg.sender_did.clone(),
                         recipient_id: state.peer_id.clone(),
-                        reply_to_broadcast: msg.reply_to_broadcast.clone(),
-                        content: msg.content,
+                        reply_to_broadcast: decrypted.reply_to_broadcast,
+                        content: decrypted.content,
                         timestamp: msg.timestamp,
                         expires_at: None,
                         status: "received".to_string(),
@@ -1264,6 +1310,7 @@ fn spawn_gossip_listener(state: DaemonState) {
                         reply_to_broadcast: None,
                         sender_public_key_hex: String::new(),
                         signature_hex: String::new(),
+                        encryption_nonce_hex: String::new(),
                         ai_tag: None,
                     };
                     if let Ok(bytes) = serde_json::to_vec(&ack) {
@@ -1316,6 +1363,7 @@ fn spawn_presence_beacon(state: DaemonState) {
                 reply_to_broadcast: None,
                 sender_public_key_hex: String::new(),
                 signature_hex: String::new(),
+                encryption_nonce_hex: String::new(),
                 ai_tag: None,
             };
             broadcast_packet(&state, &message).await;
@@ -1340,6 +1388,7 @@ async fn gossip_forward_broadcast(
         reply_to_broadcast: None,
         sender_public_key_hex: broadcast.sender_public_key_hex,
         signature_hex: broadcast.signature_hex,
+        encryption_nonce_hex: String::new(),
         ai_tag: broadcast.ai_tag,
     };
     broadcast_packet(state, &msg).await;
@@ -1476,10 +1525,12 @@ mod tests {
         assert!(seen.insert("b".to_string()));
     }
 
-    fn test_state(peer_id: &str, socket: Arc<UdpSocket>) -> DaemonState {
+    fn test_state(socket: Arc<UdpSocket>) -> DaemonState {
+        let db = Arc::new(DbManager::new(":memory:").unwrap());
+        let peer_id = db.local_sender_id();
         DaemonState {
-            db: Arc::new(DbManager::new(":memory:").unwrap()),
-            peer_id: peer_id.to_string(),
+            db,
+            peer_id,
             gossip_port: socket.local_addr().unwrap().port(),
             socket,
             peer_routes: Arc::new(Mutex::new(HashMap::new())),
@@ -1504,15 +1555,17 @@ mod tests {
     async fn direct_message_is_stored_and_acknowledged_over_udp() {
         let socket_a = Arc::new(UdpSocket::bind(("127.0.0.1", 0)).await.unwrap());
         let socket_b = Arc::new(UdpSocket::bind(("127.0.0.1", 0)).await.unwrap());
-        let state_a = test_state("peer-a", socket_a);
-        let state_b = test_state("peer-b", socket_b);
+        let state_a = test_state(socket_a);
+        let state_b = test_state(socket_b);
+        let sender_id = state_a.peer_id.clone();
+        let recipient_id = state_b.peer_id.clone();
         spawn_gossip_listener(state_a.clone());
         spawn_gossip_listener(state_b.clone());
 
         let response = post_direct_message(
             State(state_a.clone()),
             Json(DirectMessagePayload {
-                recipient_id: "peer-b".to_string(),
+                recipient_id: recipient_id.clone(),
                 content: "hello from test".to_string(),
                 reply_to_broadcast: Some("broadcast-1".to_string()),
                 queue_ttl_seconds: Some(60),
@@ -1523,6 +1576,15 @@ mod tests {
         .into_response();
         assert_eq!(response.status(), StatusCode::ACCEPTED);
         assert_eq!(state_a.direct_messages.lock().unwrap()[0].status, "waiting");
+        let queued_packet = state_a.pending_messages.lock().unwrap().values().next().unwrap().bytes.clone();
+        let queued_text = String::from_utf8(queued_packet.clone()).unwrap();
+        assert!(!queued_text.contains("hello from test"));
+        let queued: GossipMessage = serde_json::from_slice(&queued_packet).unwrap();
+        assert_eq!(
+            queued.sender_type,
+            direct_message_crypto::ENCRYPTION_VERSION
+        );
+        assert!(queued.reply_to_broadcast.is_none());
 
         let presence = GossipMessage {
             msg_type: "presence".to_string(),
@@ -1534,13 +1596,14 @@ mod tests {
             message_id: None,
             recipient_id: None,
             reply_to_broadcast: None,
-                sender_public_key_hex: String::new(),
-                signature_hex: String::new(),
-                ai_tag: None,
+            sender_public_key_hex: String::new(),
+            signature_hex: String::new(),
+            encryption_nonce_hex: String::new(),
+            ai_tag: None,
         };
         let bytes = serde_json::to_vec(&presence).unwrap();
         state_b.socket.send_to(&bytes, state_a.socket.local_addr().unwrap()).await.unwrap();
-        wait_until(|| state_a.peer_routes.lock().unwrap().contains_key("peer-b")).await;
+        wait_until(|| state_a.peer_routes.lock().unwrap().contains_key(&recipient_id)).await;
         dispatch_pending_direct_messages(&state_a).await;
 
         wait_until(|| {
@@ -1550,18 +1613,48 @@ mod tests {
         let received = state_b.direct_messages.lock().unwrap().clone();
         assert!(state_a.pending_messages.lock().unwrap().is_empty());
         assert_eq!(received.len(), 1);
-        assert_eq!(received[0].sender_id, "peer-a");
+        assert_eq!(received[0].sender_id, sender_id);
         assert_eq!(received[0].reply_to_broadcast.as_deref(), Some("broadcast-1"));
         assert_eq!(received[0].content, "hello from test");
         assert_eq!(received[0].status, "received");
     }
 
     #[tokio::test]
+    async fn legacy_plaintext_direct_message_is_rejected_without_acknowledgement() {
+        let recipient = test_state(Arc::new(UdpSocket::bind(("127.0.0.1", 0)).await.unwrap()));
+        let sender = DbManager::new(":memory:").unwrap();
+        let sender_socket = UdpSocket::bind(("127.0.0.1", 0)).await.unwrap();
+        spawn_gossip_listener(recipient.clone());
+        let message = GossipMessage {
+            msg_type: "direct_message".to_string(),
+            sender_did: sender.local_sender_id(),
+            sender_type: String::new(),
+            region: String::new(),
+            content: "legacy plaintext".to_string(),
+            timestamp: unix_timestamp(),
+            message_id: Some("legacy-1".to_string()),
+            recipient_id: Some(recipient.peer_id.clone()),
+            reply_to_broadcast: None,
+            sender_public_key_hex: String::new(),
+            signature_hex: String::new(),
+            encryption_nonce_hex: String::new(),
+            ai_tag: None,
+        };
+        let bytes = serde_json::to_vec(&message).unwrap();
+        sender_socket.send_to(&bytes, recipient.socket.local_addr().unwrap()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        assert!(recipient.direct_messages.lock().unwrap().is_empty());
+        assert!(sender_socket.try_recv_from(&mut [0u8; 1024]).is_err());
+    }
+
+    #[tokio::test]
     async fn identical_queued_reply_is_not_duplicated() {
         let socket = Arc::new(UdpSocket::bind(("127.0.0.1", 0)).await.unwrap());
-        let state = test_state("peer-a", socket);
+        let state = test_state(socket);
+        let recipient_id = DbManager::new(":memory:").unwrap().local_sender_id();
         let payload = || DirectMessagePayload {
-            recipient_id: "offline-peer".to_string(),
+            recipient_id: recipient_id.clone(),
             content: "same text".to_string(),
             reply_to_broadcast: None,
             queue_ttl_seconds: Some(60),
@@ -1580,12 +1673,13 @@ mod tests {
     #[tokio::test]
     async fn offline_recipient_waits_in_memory_then_expires() {
         let socket = Arc::new(UdpSocket::bind(("127.0.0.1", 0)).await.unwrap());
-        let state = test_state("peer-a", socket);
+        let state = test_state(socket);
+        let recipient_id = DbManager::new(":memory:").unwrap().local_sender_id();
 
         let response = post_direct_message(
             State(state.clone()),
             Json(DirectMessagePayload {
-                recipient_id: "offline-peer".to_string(),
+                recipient_id,
                 content: "do not queue me".to_string(),
                 reply_to_broadcast: None,
                 queue_ttl_seconds: Some(60),
@@ -1608,17 +1702,18 @@ mod tests {
 
     #[tokio::test]
     async fn unacknowledged_direct_message_stops_after_retries() {
-        let state = test_state("peer-a", Arc::new(UdpSocket::bind(("127.0.0.1", 0)).await.unwrap()));
+        let state = test_state(Arc::new(UdpSocket::bind(("127.0.0.1", 0)).await.unwrap()));
+        let recipient_id = DbManager::new(":memory:").unwrap().local_sender_id();
         let silent_peer = UdpSocket::bind(("127.0.0.1", 0)).await.unwrap();
         state.peer_routes.lock().unwrap().insert(
-            "peer-b".to_string(),
+            recipient_id.clone(),
             PeerRoute { address: silent_peer.local_addr().unwrap(), last_seen: Instant::now() },
         );
 
         let response = post_direct_message(
             State(state.clone()),
             Json(DirectMessagePayload {
-                recipient_id: "peer-b".to_string(),
+                recipient_id,
                 content: "anyone there?".to_string(),
                 reply_to_broadcast: None,
                 queue_ttl_seconds: Some(60),
@@ -1644,17 +1739,18 @@ mod tests {
 
     #[tokio::test]
     async fn failed_direct_message_can_be_resent_by_hand() {
-        let state = test_state("peer-a", Arc::new(UdpSocket::bind(("127.0.0.1", 0)).await.unwrap()));
+        let state = test_state(Arc::new(UdpSocket::bind(("127.0.0.1", 0)).await.unwrap()));
+        let recipient_id = DbManager::new(":memory:").unwrap().local_sender_id();
         let silent_peer = UdpSocket::bind(("127.0.0.1", 0)).await.unwrap();
         state.peer_routes.lock().unwrap().insert(
-            "peer-b".to_string(),
+            recipient_id.clone(),
             PeerRoute { address: silent_peer.local_addr().unwrap(), last_seen: Instant::now() },
         );
 
         let _ = post_direct_message(
             State(state.clone()),
             Json(DirectMessagePayload {
-                recipient_id: "peer-b".to_string(),
+                recipient_id,
                 content: "resend me".to_string(),
                 reply_to_broadcast: None,
                 queue_ttl_seconds: Some(60),
@@ -1694,7 +1790,6 @@ mod tests {
     #[tokio::test]
     async fn oversized_direct_message_is_rejected_without_queueing() {
         let state = test_state(
-            "peer-a",
             Arc::new(UdpSocket::bind(("127.0.0.1", 0)).await.unwrap()),
         );
         let response = post_direct_message(
@@ -1716,11 +1811,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn oversized_broadcast_reference_is_rejected_without_queueing() {
+        let state = test_state(Arc::new(UdpSocket::bind(("127.0.0.1", 0)).await.unwrap()));
+        let recipient_id = DbManager::new(":memory:").unwrap().local_sender_id();
+        let response = post_direct_message(
+            State(state.clone()),
+            Json(DirectMessagePayload {
+                recipient_id,
+                content: "small message".to_string(),
+                reply_to_broadcast: Some("x".repeat(MAX_DM_REPLY_REFERENCE_BYTES + 1)),
+                queue_ttl_seconds: Some(60),
+                max_retries: None,
+            }),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert!(state.pending_messages.lock().unwrap().is_empty());
+        assert!(state.direct_messages.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn maximum_encrypted_direct_message_fits_udp_buffer() {
+        let state = test_state(Arc::new(
+            UdpSocket::bind(("127.0.0.1", 0)).await.unwrap(),
+        ));
+        let recipient_id = DbManager::new(":memory:").unwrap().local_sender_id();
+        let record = DirectMessageRecord {
+            id: "message-max".to_string(),
+            sender_id: state.peer_id.clone(),
+            recipient_id,
+            reply_to_broadcast: Some("r".repeat(MAX_DM_REPLY_REFERENCE_BYTES)),
+            content: "x".repeat(MAX_DIRECT_MESSAGE_BYTES),
+            timestamp: 1,
+            expires_at: None,
+            status: "waiting".to_string(),
+            attempts: 0,
+            max_attempts: 1,
+        };
+
+        let packet = encode_direct_message(&record, &state.db).unwrap();
+        assert!(packet.len() <= 8192);
+    }
+
+    #[tokio::test]
     async fn oversized_broadcast_is_rejected_before_storage() {
-        let state = test_state(
-            "peer-a",
-            Arc::new(UdpSocket::bind(("127.0.0.1", 0)).await.unwrap()),
-        );
+        let state = test_state(Arc::new(UdpSocket::bind(("127.0.0.1", 0)).await.unwrap()));
         let response = post_broadcast(
             State(state.clone()),
             Json(PostBroadcastReq {
