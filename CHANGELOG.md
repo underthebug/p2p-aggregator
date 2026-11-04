@@ -5,6 +5,10 @@ Keep the version in `Cargo.toml`, `src-tauri/Cargo.toml` and
 `src-tauri/tauri.conf.json` the same. The app's Help and About pages read the
 version from the running executable.
 
+## 0.2.2
+
+- Added `release.sh`, a one-command Linux build, test, package and checksum script.
+
 ## 0.2.1
 
 - End-to-end encrypted direct messages in the mesh daemon (X25519,
