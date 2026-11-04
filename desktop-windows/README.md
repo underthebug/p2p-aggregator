@@ -52,5 +52,9 @@ endpoints. As the recipient encryption key is long-lived, a later compromise
 of that identity key could expose previously captured messages. This is not a
 replacement for a forward-secret ratcheting protocol.
 
+In the browser UI, use **Copy sender ID** on a feed card, then paste that ID
+into the direct-message recipient field. **Message sender** fills the field
+directly; replies can queue while the recipient is offline.
+
 For Linux cross-compilation, see `build-windows.sh` for the required `cargo-xwin`
 and LLVM toolchain.
