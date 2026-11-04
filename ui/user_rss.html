@@ -39,7 +39,7 @@
         <p>Active subscriptions & OPML sync.</p>
         
         <div class="opml-bar">
-            <a href="/api/rss/opml" class="secondary-btn" style="flex:1;">Export OPML</a>
+            <button class="secondary-btn" style="flex:1;" onclick="exportOpml()">Export OPML</button>
             <button class="secondary-btn" style="flex:1;" onclick="document.getElementById('opml-file').click()">Import OPML</button>
             <input type="file" id="opml-file" style="display:none" accept=".opml,.xml" onchange="importOpml(event)">
         </div>
@@ -62,34 +62,69 @@
     </main>
     <script>
         const readArticles = JSON.parse(localStorage.getItem('sov_read_articles') || '{}');
+        const isDesktop = !!window.__TAURI_INTERNALS__;
+        const invoke = (cmd, args) => window.__TAURI_INTERNALS__.invoke(cmd, args);
 
         function getDomain(url) {
             try { return new URL(url).hostname; } catch(e) { return ''; }
         }
 
+        function safeHttpUrl(value) {
+            try {
+                const url = new URL(value);
+                return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : null;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        async function fetchSubscriptionUrls() {
+            if (isDesktop) {
+                return await invoke('rss_list_subscriptions');
+            }
+            const res = await fetch('/api/rss/feeds');
+            const feeds = await res.json();
+            return feeds.map(f => f.url);
+        }
+
         async function loadSubscriptions() {
             try {
-                const res = await fetch('/api/rss/feeds');
-                const feeds = await res.json();
+                const urls = await fetchSubscriptionUrls();
                 const list = document.getElementById('subscriptions-list');
-                list.innerHTML = '';
-                if (feeds.length === 0) {
-                    list.innerHTML = '<div style="color: #64748b; font-size: 11px;">No active feeds.</div>';
+                list.replaceChildren();
+                if (urls.length === 0) {
+                    const empty = document.createElement('div');
+                    empty.style.cssText = 'color:#64748b;font-size:11px;';
+                    empty.textContent = 'No active feeds.';
+                    list.appendChild(empty);
                     return;
                 }
-                feeds.forEach(f => {
+                urls.forEach(url => {
                     const item = document.createElement('div');
                     item.className = 'sub-item';
-                    
-                    const domain = getDomain(f.url);
+
+                    const domain = getDomain(url);
                     const faviconUrl = domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=16` : '';
 
                     const span = document.createElement('span');
                     span.className = 'sub-url';
-                    span.innerHTML = `${faviconUrl ? `<img src="${faviconUrl}" width="14" height="14" style="border-radius:2px;">` : '🌐'} ${f.url}`;
+                    if (faviconUrl) {
+                        const favicon = document.createElement('img');
+                        favicon.src = faviconUrl;
+                        favicon.width = 14;
+                        favicon.height = 14;
+                        favicon.alt = '';
+                        favicon.style.borderRadius = '2px';
+                        span.appendChild(favicon);
+                    } else {
+                        span.appendChild(document.createTextNode('🌐'));
+                    }
+                    const urlText = document.createElement('span');
+                    urlText.textContent = url;
+                    span.appendChild(urlText);
                     span.onclick = () => {
-                        document.getElementById('feed-url').value = f.url;
-                        subscribeFeedForUrl(f.url);
+                        document.getElementById('feed-url').value = url;
+                        subscribeFeedForUrl(url);
                     };
 
                     const btn = document.createElement('button');
@@ -97,11 +132,19 @@
                     btn.textContent = 'Unsub';
                     btn.onclick = async (e) => {
                         e.stopPropagation();
-                        await fetch('/api/rss/sub', {
-                            method: 'DELETE',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ url: f.url })
-                        });
+                        try {
+                            if (isDesktop) {
+                                await invoke('rss_unsubscribe', { url });
+                            } else {
+                                await fetch('/api/rss/sub', {
+                                    method: 'DELETE',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ url })
+                                });
+                            }
+                        } catch(err) {
+                            alert(`Unsubscribe failed: ${err.message || err}`);
+                        }
                         loadSubscriptions();
                     };
 
@@ -114,43 +157,63 @@
             }
         }
 
+        async function subscribeRemote(url) {
+            if (isDesktop) {
+                return await invoke('rss_subscribe', { url });
+            }
+            const res = await fetch('/api/rss/sub', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url })
+            });
+            if (!res.ok) {
+                throw new Error('Failed to fetch RSS feed. Check URL.');
+            }
+            const data = await res.json();
+            return data.items || [];
+        }
+
         async function subscribeFeedForUrl(url) {
             const listContainer = document.getElementById('feed-items');
-            listContainer.innerHTML = '<div style="color: #94a3b8;">Fetching feed through mesh proxy...</div>';
+            listContainer.textContent = 'Fetching feed through mesh proxy...';
 
             try {
-                const res = await fetch('/api/rss/sub', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url })
-                });
+                const items = await subscribeRemote(url);
+                listContainer.replaceChildren();
+                if (items.length > 0) {
+                    items.forEach(item => {
+                        const card = document.createElement('div');
+                        const isRead = readArticles[item.link];
+                        card.className = `feed-card ${isRead ? 'read' : ''}`;
+                        const header = document.createElement('div');
+                        header.style.cssText = 'display:flex;justify-content:space-between;align-items:flex-start;';
+                        const safeLink = safeHttpUrl(item.link);
+                        const title = document.createElement(safeLink ? 'a' : 'span');
+                        title.textContent = item.title;
+                        if (safeLink) {
+                            title.href = safeLink;
+                            title.target = '_blank';
+                            title.rel = 'noopener noreferrer';
+                            title.addEventListener('click', () => markAsRead(item.link, title));
+                        }
+                        const readButton = document.createElement('button');
+                        readButton.style.cssText = 'background:none;border:1px solid #334155;color:#94a3b8;font-size:10px;padding:2px 6px;border-radius:4px;cursor:pointer;';
+                        readButton.textContent = isRead ? 'Mark Unread' : 'Mark Read';
+                        readButton.addEventListener('click', () => toggleRead(item.link, readButton));
+                        header.append(title, readButton);
 
-                if (res.ok) {
-                    const data = await res.json();
-                    listContainer.innerHTML = '';
-                    if (data.items && data.items.length > 0) {
-                        data.items.forEach(item => {
-                            const card = document.createElement('div');
-                            const isRead = readArticles[item.link];
-                            card.className = `feed-card ${isRead ? 'read' : ''}`;
-                            card.innerHTML = `
-                                <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-                                    <a href="${item.link}" target="_blank" onclick="markAsRead('${item.link}', this)">${item.title}</a>
-                                    <button style="background:none; border:1px solid #334155; color:#94a3b8; font-size:10px; padding:2px 6px; border-radius:4px; cursor:pointer;" onclick="toggleRead('${item.link}', this)">${isRead ? 'Mark Unread' : 'Mark Read'}</button>
-                                </div>
-                                <div style="font-size: 11px; color: #64748b; margin-top: 6px;">📅 ${item.pub_date}</div>
-                            `;
-                            listContainer.appendChild(card);
-                        });
-                    } else {
-                        listContainer.innerHTML = '<div style="color: #94a3b8;">No articles found in feed.</div>';
-                    }
-                    loadSubscriptions();
+                        const pubDate = document.createElement('div');
+                        pubDate.style.cssText = 'font-size:11px;color:#64748b;margin-top:6px;';
+                        pubDate.textContent = item.pub_date ? `📅 ${item.pub_date}` : '';
+                        card.append(header, pubDate);
+                        listContainer.appendChild(card);
+                    });
                 } else {
-                    listContainer.innerHTML = '<div style="color: #ef4444;">Failed to fetch RSS feed. Check URL.</div>';
+                    listContainer.textContent = 'No articles found in feed.';
                 }
+                loadSubscriptions();
             } catch(e) {
-                listContainer.innerHTML = `<div style="color: #ef4444;">Error: ${e.message}</div>`;
+                listContainer.textContent = `Error: ${e.message || e}`;
             }
         }
 
@@ -174,24 +237,51 @@
             localStorage.setItem('sov_read_articles', JSON.stringify(readArticles));
         }
 
+        async function exportOpml() {
+            if (!isDesktop) {
+                window.location.href = '/api/rss/opml';
+                return;
+            }
+            try {
+                const opml = await invoke('rss_export_opml');
+                const blobUrl = URL.createObjectURL(new Blob([opml], { type: 'text/x-opml' }));
+                const a = document.createElement('a');
+                a.href = blobUrl;
+                a.download = 'subscriptions.opml';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(blobUrl);
+            } catch(e) {
+                alert(`Export failed: ${e.message || e}`);
+            }
+        }
+
         async function importOpml(event) {
             const file = event.target.files[0];
             if (!file) return;
             const text = await file.text();
             try {
-                const res = await fetch('/api/rss/opml', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ opml: text })
-                });
-                if (res.ok) {
-                    alert('OPML feeds imported successfully!');
-                    loadSubscriptions();
+                if (isDesktop) {
+                    const count = await invoke('rss_import_opml', { opml: text });
+                    alert(`Imported ${count} feed(s).`);
                 } else {
-                    alert('Failed to import OPML.');
+                    const res = await fetch('/api/rss/opml', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ opml: text })
+                    });
+                    if (!res.ok) {
+                        alert('Failed to import OPML.');
+                        return;
+                    }
+                    alert('OPML feeds imported successfully!');
                 }
+                loadSubscriptions();
             } catch(e) {
-                alert(`Error importing OPML: ${e.message}`);
+                alert(`Error importing OPML: ${e.message || e}`);
+            } finally {
+                event.target.value = '';
             }
         }
 

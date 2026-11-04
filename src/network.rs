@@ -12,7 +12,7 @@ pub struct SwarmBehaviourStruct {
 }
 
 pub async fn build_swarm(keypair: &libp2p::identity::Keypair, port: u16) -> Result<(Swarm<SwarmBehaviourStruct>, IdentTopic), Box<dyn Error>> {
-    let topic = IdentTopic::new("p2p-aggregator-main");
+    let topic = IdentTopic::new("p2p-aggregator-v1");
     let topic_clone = topic.clone();
 
     let swarm = libp2p::SwarmBuilder::with_existing_identity(keypair.clone())

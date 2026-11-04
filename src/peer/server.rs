@@ -17,7 +17,10 @@ pub async fn start_p2p_listener(
     println!("P2P TCP encrypted listener active on {}", bind_addr);
 
     tokio::spawn(async move {
-        let identity = Arc::new(NodeIdentity::load_or_generate("node.key"));
+        let identity = Arc::new(
+            NodeIdentity::load_or_generate("data/node.key")
+                .expect("Failed to load or create persistent node identity"),
+        );
 
         loop {
             match listener.accept().await {

@@ -1187,6 +1187,7 @@ checksum = "70e796c081cee67dc755e1a36a0a172b897fab85fc3f6bc48307991f64e4eca9"
 dependencies = [
  "curve25519-dalek",
  "ed25519",
+ "rand_core 0.6.4",
  "serde",
  "sha2",
  "subtle",
@@ -3745,19 +3746,29 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
 name = "p2p-desktop"
-version = "0.1.0"
+version = "0.2.2"
 dependencies = [
  "axum",
+ "base64 0.22.1",
+ "chacha20poly1305",
+ "curve25519-dalek",
+ "ed25519-dalek",
  "futures",
+ "hex",
+ "hkdf",
  "libp2p",
+ "quick-xml",
+ "rand 0.8.8",
  "reqwest",
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tokio",
  "tower-http 0.5.2",
+ "x25519-dalek",
 ]
 
 [[package]]

@@ -6,9 +6,9 @@ use libp2p::{
 };
 use rusqlite::Connection;
 use std::error::Error;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::Duration;
 use std::collections::HashSet;
+use p2p_aggregator::identity::{public_key_from_did, verify_broadcast_signature, BroadcastMessage};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -23,6 +23,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Ensure database and tables exist
     let conn = Connection::open(&db_path)?;
+    p2p_aggregator::migrations::migrate(&conn)?;
     conn.execute(
         "CREATE TABLE IF NOT EXISTS secure_broadcasts (
             id TEXT PRIMARY KEY,
@@ -63,7 +64,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     )?;
 
     // Subscribe to default core regions
-    let default_regions = vec!["#global", "#pottstown", "#tech"];
+    let default_regions = vec!["p2p-aggregator-v1", "#global", "#pottstown", "#tech"];
     for reg in &default_regions {
         let topic = IdentTopic::new(*reg);
         gossipsub.subscribe(&topic)?;
@@ -110,29 +111,47 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     message_id: _,
                     message,
                 })) => {
-                    if let Ok(text) = String::from_utf8(message.data) {
+                    if let Ok(broadcast) = serde_json::from_slice::<BroadcastMessage>(&message.data) {
                         let topic_str = message.topic.as_str().to_string();
-                        println!("⚡ [GossipSub] Received packet on [{}] -> len: {} bytes", topic_str, text.len());
-                        
-                        // Insert incoming gossip into SQLite
+                        let valid = public_key_from_did(&broadcast.sender_did)
+                            .is_some_and(|public_key| verify_broadcast_signature(
+                                &public_key,
+                                &broadcast.id,
+                                &broadcast.region,
+                                &broadcast.sender_did,
+                                &broadcast.sender_type,
+                                &broadcast.content,
+                                broadcast.magnet_link.as_deref(),
+                                broadcast.timestamp,
+                                broadcast.ai_tag.as_deref(),
+                                &broadcast.signature_hex,
+                            ));
+                        if !valid {
+                            eprintln!("[GossipSub] Rejected invalid signature on topic [{topic_str}]");
+                            continue;
+                        }
+                        println!("⚡ [GossipSub] Verified broadcast {} from {}", broadcast.id, broadcast.sender_did);
+
                         if let Ok(db_conn) = Connection::open(&db_path) {
-                            let id = uuid::Uuid::new_v4().to_string();
-                            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
-                            let _ = db_conn.execute(
-                                "INSERT OR IGNORE INTO secure_broadcasts (id, region, sender_did, sender_type, content, magnet_link, signature_hex, timestamp) 
-                                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                            let inserted = db_conn.execute(
+                                "INSERT OR IGNORE INTO secure_broadcasts
+                                 (id, region, sender_did, sender_type, content, magnet_link, signature_hex, timestamp, ai_tag)
+                                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                                 rusqlite::params![
-                                    id,
-                                    topic_str,
-                                    "did:p2p:peer-node",
-                                    "human",
-                                    text,
-                                    Option::<String>::None,
-                                    "gossipsub-verified",
-                                    now
+                                    broadcast.id,
+                                    broadcast.region,
+                                    broadcast.sender_did,
+                                    broadcast.sender_type,
+                                    broadcast.content,
+                                    broadcast.magnet_link,
+                                    broadcast.signature_hex,
+                                    broadcast.timestamp,
+                                    broadcast.ai_tag,
                                 ],
                             );
-                            seen_broadcasts.insert(id);
+                            if inserted.is_ok() {
+                                seen_broadcasts.insert(broadcast.id);
+                            }
                         }
                     }
                 }
@@ -144,24 +163,64 @@ async fn main() -> Result<(), Box<dyn Error>> {
             _ = tokio::time::sleep(Duration::from_secs(1)) => {
                 // Poll SQLite for newly composed local broadcasts to publish over GossipSub
                 if let Ok(db_conn) = Connection::open(&db_path) {
-                    let mut stmt = db_conn.prepare("SELECT id, region, content FROM secure_broadcasts ORDER BY timestamp DESC LIMIT 10").unwrap();
+                    let mut stmt = db_conn.prepare(
+                        "SELECT id, region, sender_did, sender_type, content, magnet_link, signature_hex, timestamp, ai_tag
+                         FROM secure_broadcasts ORDER BY timestamp DESC LIMIT 10"
+                    ).unwrap();
                     let rows = stmt.query_map([], |row| {
                         Ok((
                             row.get::<_, String>(0)?,
                             row.get::<_, String>(1)?,
                             row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                            row.get::<_, String>(4)?,
+                            row.get::<_, Option<String>>(5)?,
+                            row.get::<_, String>(6)?,
+                            row.get::<_, i64>(7)?,
+                            row.get::<_, Option<String>>(8)?,
                         ))
                     });
 
                     if let Ok(iter) = rows {
                         for r in iter.flatten() {
-                            let (id, region, content) = r;
+                            let (id, region, sender_did, sender_type, content, magnet_link, signature_hex, timestamp, ai_tag) = r;
                             if !seen_broadcasts.contains(&id) {
                                 seen_broadcasts.insert(id.clone());
-                                println!("📤 [Database Sync] Found new local broadcast [{}] -> Publishing to mesh...", region);
-                                
-                                let topic = IdentTopic::new(&region);
-                                let _ = swarm.behaviour_mut().gossipsub.publish(topic, content.into_bytes());
+                                let Some(public_key) = public_key_from_did(&sender_did) else {
+                                    eprintln!("[Database Sync] Skipping broadcast with invalid DID: {id}");
+                                    continue;
+                                };
+                                if !verify_broadcast_signature(
+                                    &public_key,
+                                    &id,
+                                    &region,
+                                    &sender_did,
+                                    &sender_type,
+                                    &content,
+                                    magnet_link.as_deref(),
+                                    timestamp,
+                                    ai_tag.as_deref(),
+                                    &signature_hex,
+                                ) {
+                                    eprintln!("[Database Sync] Skipping broadcast with invalid signature: {id}");
+                                    continue;
+                                }
+                                let broadcast = BroadcastMessage {
+                                    id,
+                                    region,
+                                    sender_did,
+                                    sender_type,
+                                    content,
+                                    magnet_link,
+                                    signature_hex,
+                                    timestamp,
+                                    ai_tag,
+                                };
+                                if let Ok(bytes) = serde_json::to_vec(&broadcast) {
+                                    println!("📤 [Database Sync] Publishing signed broadcast {}", broadcast.id);
+                                    let topic = IdentTopic::new("p2p-aggregator-v1");
+                                    let _ = swarm.behaviour_mut().gossipsub.publish(topic, bytes);
+                                }
                             }
                         }
                     }

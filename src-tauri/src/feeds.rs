@@ -9,18 +9,6 @@ pub struct Feed {
     pub url: String,
 }
 
-pub fn init_db(conn: &Connection) -> Result<(), rusqlite::Error> {
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS user_feeds (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            url TEXT NOT NULL UNIQUE
-        )",
-        [],
-    )?;
-    Ok(())
-}
-
 #[tauri::command]
 pub fn get_user_feeds(state: tauri::State<'_, Mutex<Connection>>) -> Result<Vec<Feed>, String> {
     let conn = state.lock().map_err(|e| e.to_string())?;

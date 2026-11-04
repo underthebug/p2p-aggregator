@@ -1,6 +1,6 @@
 // Hybrid API client: uses local REST API if served via web, falls back to Tauri IPC
 const getApiBase = () => {
-  return window.location.protocol.startsWith('http') ? '' : 'http://192.168.1.87:41872';
+  return window.location.protocol.startsWith('http') ? '' : 'http://127.0.0.1:41875';
 };
 
 export async function getMeshBroadcasts() {
@@ -33,7 +33,10 @@ export async function postMeshBroadcast(payload) {
 
 export async function askAiNode(prompt, model = "qwen2.5:7b") {
   try {
-    const res = await fetch('/api/ai/chat', {
+    if (window.__TAURI_INTERNALS__?.invoke) {
+      return await window.__TAURI_INTERNALS__.invoke('local_ai_chat', { prompt, model });
+    }
+    const res = await window.meshApiFetch('/api/ai/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt, model })
