@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Mesh Network & Peer Monitor</title>
+  <style>
+    body { font-family: monospace; background: #121212; color: #00ffcc; margin: 0; padding: 15px; box-sizing: border-box; }
+    h3 { margin-top: 0; font-size: 1rem; border-bottom: 1px solid #333; padding-bottom: 8px; }
+    .card { background: #1e1e1e; padding: 12px; border-radius: 6px; border: 1px solid #333; margin-bottom: 12px; }
+    .peer-item { font-size: 0.8rem; background: #151515; padding: 6px; margin-top: 6px; border-radius: 3px; border: 1px solid #2a2a2a; word-break: break-all; color: #e0e0e0; }
+  </style>
+</head>
+<body>
+  <div class="card" style="border-color: #00ffcc;">
+    <h3>🟢 ACTIVE MESH & NETWORK CONNECTIONS</h3>
+    <div style="font-size: 0.85rem; color: #aaa; line-height: 1.5;">
+      <strong>Network Protocols:</strong> TCP / Noise / Yamux / Kademlia DHT / mDNS<br>
+      <strong>Listening Endpoint:</strong> /ip4/0.0.0.0/tcp/4001
+    </div>
+  </div>
+
+  <div class="card" style="border-color: #82aaff;">
+    <h3 style="color: #82aaff;">🟢 Connected Peers (<span id="monitor-peer-count">0</span>)</h3>
+    <div id="monitor-peers-list" style="max-height: 240px; overflow-y: auto;">
+      <div style="font-size: 0.8rem; color: #777;">Scanning swarm peers...</div>
+    </div>
+  </div>
+
+  <script>
+    async function invokeCmd(cmd, args = {}) {
+      try {
+        if (window.__TAURI__ && window.__TAURI__.core) {
+          return await window.__TAURI__.core.invoke(cmd, args);
+        }
+      } catch (e) {
+        console.error("Invoke error:", e);
+      }
+      return [];
+    }
+
+    async function pollPeers() {
+      const peers = await invokeCmd('get_connected_peers');
+      const countEl = document.getElementById('monitor-peer-count');
+      const listDiv = document.getElementById('monitor-peers-list');
+      
+      if (!peers) {
+        countEl.innerText = '0';
+        listDiv.innerHTML = '<div style="font-size:0.8rem; color:#777;">Initializing peer table...</div>';
+        return;
+      }
+
+      countEl.innerText = peers.length;
+      if (peers.length === 0) {
+        listDiv.innerHTML = '<div style="font-size:0.8rem; color:#777;">No active peer connections. Discovery via DHT & mDNS running...</div>';
+        return;
+      }
+
+      listDiv.innerHTML = peers.map(([peerId, addr]) => `
+        <div class="peer-item">
+          <div style="color:#00ffcc; font-weight:bold;">${peerId}</div>
+          <div style="color:#888; font-size:0.7rem;">${addr}</div>
+        </div>
+      `).join('');
+    }
+
+    setInterval(pollPeers, 2000);
+    window.addEventListener('DOMContentLoaded', pollPeers);
+  </script>
+</body>
+</html>

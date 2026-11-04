@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>P2P File & Torrent Swarm</title>
+  <style>
+    body { font-family: monospace; background: #121212; color: #00ffcc; margin: 0; padding: 15px; box-sizing: border-box; }
+    h3 { margin-top: 0; font-size: 1rem; border-bottom: 1px solid #333; padding-bottom: 8px; }
+    .card { background: #1e1e1e; padding: 12px; border-radius: 6px; border: 1px solid #005533; margin-bottom: 12px; }
+    .file-card { background: #181818; border: 1px solid #333; padding: 10px; border-radius: 4px; margin-bottom: 8px; }
+    .control-label { font-size: 0.75rem; color: #888; margin-top: 6px; display: block; }
+    input, button { background: #2a2a2a; color: #fff; border: 1px solid #444; padding: 6px 8px; margin-bottom: 6px; border-radius: 4px; width: 100%; box-sizing: border-box; font-family: monospace; font-size: 0.85rem; }
+    .btn-submit { background: #004433; color: #00ffcc; font-weight: bold; border-color: #00ffcc; cursor: pointer; }
+    .btn-submit:hover { background: #006644; }
+    .magnet-box { font-size: 0.75rem; background: #121212; padding: 6px; border-radius: 3px; border: 1px solid #2a2a2a; color: #aaa; word-break: break-all; user-select: all; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h3>📦 PUBLISH FILE / MAGNET LINK</h3>
+    <span class="control-label">FILE / PACKAGE NAME:</span>
+    <input type="text" id="file-name" placeholder="e.g. Offline Wikipedia Dump 2026.iso">
+
+    <span class="control-label">MAGNET LINK / URI:</span>
+    <input type="text" id="file-magnet" placeholder="magnet:?xt=urn:btih:...">
+
+    <span class="control-label">SIZE:</span>
+    <input type="text" id="file-size" placeholder="e.g. 4.2 GB">
+
+    <button class="btn-submit" onclick="publishFile()">Broadcast to Swarm</button>
+  </div>
+
+  <div class="card" style="border-color: #82aaff;">
+    <h3 style="color: #82aaff;">🌐 SWARM REPOSITORY (<span id="file-count">0</span>)</h3>
+    <div id="file-list">Loading repository...</div>
+  </div>
+
+  <script>
+    async function invokeCmd(cmd, args = {}) {
+      if (window.__TAURI__ && window.__TAURI__.core) {
+        return await window.__TAURI__.core.invoke(cmd, args);
+      }
+    }
+
+    async function loadFiles() {
+      try {
+        const files = await invokeCmd('get_file_shares');
+        document.getElementById('file-count').innerText = files.length;
+        const listDiv = document.getElementById('file-list');
+
+        if (!files || files.length === 0) {
+          listDiv.innerHTML = '<div style="font-size:0.8rem; color:#777;">No files shared in the swarm yet.</div>';
+          return;
+        }
+
+        listDiv.innerHTML = files.map(f => `
+          <div class="file-card">
+            <div style="display:flex; justify-content:space-between; font-weight:bold; color:#fff;">
+              <span>${f.filename}</span>
+              <span style="color:#00ffcc; font-size:0.8rem;">${f.file_size}</span>
+            </div>
+            <div class="magnet-box">${f.magnet_link}</div>
+            <div style="font-size:0.7rem; color:#888; margin-top:4px;">Uploader: ${f.uploader_pubkey.substring(0, 16)}...</div>
+          </div>
+        `).join('');
+      } catch (err) {
+        console.error("Failed to load files:", err);
+      }
+    }
+
+    async function publishFile() {
+      const filename = document.getElementById('file-name').value.trim();
+      const magnet_link = document.getElementById('file-magnet').value.trim();
+      const file_size = document.getElementById('file-size').value.trim();
+
+      if (!filename || !magnet_link) {
+        alert("Please provide a file name and magnet link.");
+        return;
+      }
+
+      try {
+        await invokeCmd('publish_file_share', { filename, magnet_link, file_size });
+        document.getElementById('file-name').value = '';
+        document.getElementById('file-magnet').value = '';
+        document.getElementById('file-size').value = '';
+        loadFiles();
+      } catch (err) {
+        alert("Failed to publish file: " + err);
+      }
+    }
+
+    setInterval(loadFiles, 4000);
+    window.addEventListener('DOMContentLoaded', loadFiles);
+  </script>
+</body>
+</html>

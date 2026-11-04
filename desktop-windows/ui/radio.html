@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <title>Mesh Audio Streams</title>
+    <style>
+        body { margin: 0; background: #020617; color: #f8fafc; font-family: system-ui, sans-serif; height: 100vh; display: flex; overflow: hidden; }
+        aside { width: 380px; background: #0f172a; border-right: 1px solid #1e293b; display: flex; flex-direction: column; padding: 24px; box-shadow: 10px 0 30px rgba(0,0,0,0.8); z-index: 10; overflow-y: auto; }
+        main { flex-grow: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 32px; background: radial-gradient(circle at center, #0f172a 0%, #020617 100%); position: relative; }
+        h3 { margin: 0 0 8px 0; color: #38bdf8; font-size: 18px; display: flex; align-items: center; gap: 8px; }
+        p { font-size: 12px; color: #94a3b8; margin: 0 0 16px 0; }
+        .back-btn { background: #1e293b; color: #94a3b8; border: 1px solid #334155; margin-bottom: 16px; text-align: center; text-decoration: none; padding: 8px; border-radius: 6px; font-size: 12px; font-weight: 500; display: block; }
+        .back-btn:hover { background: #334155; color: #fff; }
+        
+        .modal-trigger-btn { background: #1e293b; color: #38bdf8; border: 1px solid #334155; padding: 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; width: 100%; margin-bottom: 16px; text-align: center; text-decoration: none; display: block; box-sizing: border-box; }
+        .modal-trigger-btn:hover { background: #334155; color: #fff; }
+
+        #stations-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; overflow-y: auto; max-height: 350px; }
+        .station-item { background: #020617; border: 1px solid #1e293b; padding: 12px; border-radius: 6px; cursor: pointer; transition: all 0.2s; display: flex; justify-content: space-between; align-items: center; }
+        .station-item:hover { border-color: #38bdf8; background: #090d16; }
+        .station-title { font-weight: 600; font-size: 13px; color: #38bdf8; }
+        .station-genre { font-size: 10px; color: #64748b; margin-top: 2px; text-transform: uppercase; }
+
+        .radar-box { width: 320px; height: 320px; border-radius: 50%; border: 1px dashed #334155; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; box-shadow: 0 0 50px rgba(56, 189, 248, 0.05); }
+        .radar-center { width: 12px; height: 12px; background: #10b981; border-radius: 50%; box-shadow: 0 0 15px #10b981; position: absolute; top: 154px; left: 154px; }
+        .now-playing-banner { position: absolute; top: 40px; text-align: center; }
+        
+        audio { position: absolute; bottom: 32px; width: 60%; }
+    </style>
+</head>
+<body>
+    <aside>
+        <a href="/" class="back-btn">&#8592; Back to Dashboard</a>
+        <h3>📻 Mesh Audio Streams</h3>
+        <p>Tune into global mesh relays and streaming stations.</p>
+
+        <!-- Link to Region Subscriptions Window -->
+        <a href="/regions.html" class="modal-trigger-btn">🌐 Region Subscriptions</a>
+
+        <div style="font-size: 13px; font-weight: bold; color: #f8fafc; margin-bottom: 8px;">Active Stations</div>
+        <div id="stations-list">Loading stations...</div>
+    </aside>
+
+    <main>
+        <div class="now-playing-banner">
+            <div id="now-title" style="font-size: 22px; font-weight: bold; color: #38bdf8;">Select a Station</div>
+            <div id="now-genre" style="font-size: 12px; color: #64748b; margin-top: 4px; text-transform: uppercase;">Live Stream Relayed</div>
+        </div>
+
+        <div class="radar-box">
+            <div class="radar-center"></div>
+        </div>
+
+        <audio id="audio-player" controls autoplay></audio>
+    </main>
+
+    <script>
+        let stations = [];
+
+        async function loadStations() {
+            try {
+                const res = await fetch('/api/radio/stations');
+                stations = await res.json();
+                renderStations();
+                if (stations.length > 0) {
+                    const savedUrl = sessionStorage.getItem('mesh_radio_url');
+                    const savedName = sessionStorage.getItem('mesh_radio_name');
+                    const savedGenre = sessionStorage.getItem('mesh_radio_genre');
+                    
+                    if (savedUrl && savedName) {
+                        playStation({ name: savedName, genre: savedGenre || 'Live', url: savedUrl }, false);
+                    } else {
+                        playStation(stations[0], false);
+                    }
+                }
+            } catch(e) {
+                console.error("Failed to load stations", e);
+            }
+        }
+
+        function renderStations() {
+            const list = document.getElementById('stations-list');
+            list.innerHTML = '';
+            stations.forEach(st => {
+                const item = document.createElement('div');
+                item.className = 'station-item';
+                item.innerHTML = `
+                    <div>
+                        <div class="station-title">${st.name}</div>
+                        <div class="station-genre">${st.genre}</div>
+                    </div>
+                    <span style="font-size:16px;">▶</span>
+                `;
+                item.onclick = () => playStation(st, true);
+                list.appendChild(item);
+            });
+        }
+
+        function playStation(st, startPlaying = true) {
+            document.getElementById('now-title').textContent = st.name;
+            document.getElementById('now-genre').textContent = st.genre;
+            
+            const audio = document.getElementById('audio-player');
+            if (audio.src !== st.url) {
+                audio.src = st.url;
+            }
+            
+            sessionStorage.setItem('mesh_radio_url', st.url);
+            sessionStorage.setItem('mesh_radio_name', st.name);
+            sessionStorage.setItem('mesh_radio_genre', st.genre);
+
+            if (startPlaying) {
+                audio.play().catch(err => console.log("Auto-play prevented:", err));
+            }
+        }
+
+        loadStations();
+    </script>
+</body>
+</html>

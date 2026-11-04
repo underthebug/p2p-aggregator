@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Persistent AI Agent Manager</title>
+  <style>
+    body { font-family: monospace; background: #121212; color: #82aaff; margin: 0; padding: 15px; box-sizing: border-box; }
+    h3 { margin-top: 0; font-size: 1rem; border-bottom: 1px solid #333; padding-bottom: 8px; }
+    .card { background: #1e1e1e; padding: 12px; border-radius: 6px; border: 1px solid #3949ab; margin-bottom: 12px; }
+    .agent-card { background: #181818; border: 1px solid #444; padding: 10px; border-radius: 4px; margin-bottom: 8px; }
+    .control-label { font-size: 0.75rem; color: #888; margin-top: 6px; display: block; }
+    input, textarea, select, button { background: #2a2a2a; color: #fff; border: 1px solid #444; padding: 6px 8px; margin-bottom: 6px; border-radius: 4px; width: 100%; box-sizing: border-box; font-family: monospace; font-size: 0.85rem; }
+    textarea { resize: vertical; }
+    .btn-submit { background: #1a237e; color: #82aaff; font-weight: bold; border-color: #3949ab; cursor: pointer; }
+    .btn-submit:hover { background: #283593; }
+    .action-row { display: flex; gap: 8px; margin-top: 6px; }
+    .action-btn { background: #2a2a2a; border: 1px solid #444; color: #aaa; cursor: pointer; padding: 3px 8px; border-radius: 3px; width: unset; }
+    .action-btn:hover { color: #fff; border-color: #666; }
+    .btn-start { color: #66ff66; border-color: #33aa33; }
+    .btn-stop { color: #ff6666; border-color: #aa3333; }
+    .output-box { background: #121212; border: 1px solid #2a2a2a; padding: 8px; border-radius: 4px; font-size: 0.75rem; color: #d4d4d4; white-space: pre-wrap; max-height: 120px; overflow-y: auto; margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h3>⚙️ CREATE NEW PERSISTENT AI AGENT</h3>
+    
+    <span class="control-label">AGENT NAME:</span>
+    <input type="text" id="agent-name" placeholder="e.g. Security & Torrent Monitor">
+
+    <span class="control-label">LLM ENDPOINT:</span>
+    <input type="text" id="agent-endpoint" value="http://localhost:11434/api/generate">
+
+    <span class="control-label">MODEL:</span>
+    <input type="text" id="agent-model" value="llama3">
+
+    <span class="control-label">TARGET FEED TOPIC (e.g. general, tech-stream, direct-messages):</span>
+    <input type="text" id="agent-topic" value="general" placeholder="Topic filter">
+
+    <span class="control-label">SCHEDULE INTERVAL (SECONDS):</span>
+    <input type="number" id="agent-interval" value="60">
+
+    <span class="control-label">FOCUSED PROMPT / ANALYSIS TASK:</span>
+    <textarea id="agent-prompt" rows="2" placeholder="Scan incoming feed posts and summarize keyword occurrences..."></textarea>
+
+    <button class="btn-submit" onclick="createNewAgent()">Save & Register Agent</button>
+  </div>
+
+  <div class="card" style="border-color: #00ffcc;">
+    <h3 style="color: #00ffcc;">🤖 ACTIVE & SCHEDULED AI AGENTS (<span id="agent-count">0</span>)</h3>
+    <div id="agents-list">Loading agents...</div>
+  </div>
+
+  <script>
+    async function invokeCmd(cmd, args = {}) {
+      if (window.__TAURI__ && window.__TAURI__.core) {
+        return await window.__TAURI__.core.invoke(cmd, args);
+      }
+    }
+
+    async function loadAgents() {
+      try {
+        const agents = await invokeCmd('get_ai_agents');
+        const listDiv = document.getElementById('agents-list');
+        document.getElementById('agent-count').innerText = agents.length;
+
+        if (!agents || agents.length === 0) {
+          listDiv.innerHTML = '<div style="font-size:0.8rem; color:#777;">No persistent AI agents created yet.</div>';
+          return;
+        }
+
+        listDiv.innerHTML = agents.map(agent => `
+          <div class="agent-card" style="border-color: ${agent.status === 'RUNNING' ? '#00ffcc' : '#444'}">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <strong style="color: #82aaff;">${agent.name}</strong>
+              <span style="font-size:0.75rem; color:${agent.status === 'RUNNING' ? '#00ffcc' : '#888'};">● ${agent.status}</span>
+            </div>
+            <div style="font-size:0.75rem; color:#aaa; margin-top:4px;">
+              Topic: <strong>#${agent.target_topic}</strong> | Interval: ${agent.interval_secs}s | Model: ${agent.model}
+            </div>
+            <div style="font-size:0.75rem; color:#888; margin-top:2px; font-style:italic;">Prompt: "${agent.prompt}"</div>
+            
+            <div class="output-box">${agent.last_output || 'Awaiting execution run...'}</div>
+
+            <div class="action-row">
+              <button class="action-btn ${agent.status === 'RUNNING' ? 'btn-stop' : 'btn-start'}" onclick="toggleAgent('${agent.id}', '${agent.status}')">${agent.status === 'RUNNING' ? '⏹ Stop' : '▶ Start'}</button>
+              <button class="action-btn" onclick="runAgentNow('${agent.id}')">⚡ Run Now</button>
+              <button class="action-btn" style="color:#ff6666;" onclick="deleteAgent('${agent.id}')">🗑️ Delete</button>
+            </div>
+          </div>
+        `).join('');
+      } catch (err) {
+        console.error("Failed to load agents:", err);
+      }
+    }
+
+    async function createNewAgent() {
+      const name = document.getElementById('agent-name').value.trim();
+      const endpointUrl = document.getElementById('agent-endpoint').value.trim();
+      const model = document.getElementById('agent-model').value.trim();
+      const targetTopic = document.getElementById('agent-topic').value.trim();
+      const intervalSecs = parseInt(document.getElementById('agent-interval').value) || 60;
+      const prompt = document.getElementById('agent-prompt').value.trim();
+
+      if (!name || !prompt) {
+        alert("Please provide an agent name and prompt.");
+        return;
+      }
+
+      const newAgent = {
+        id: 'agent_' + Date.now(),
+        name,
+        endpoint_url: endpointUrl,
+        model,
+        prompt,
+        interval_secs: intervalSecs,
+        target_topic: targetTopic,
+        status: 'STOPPED',
+        last_run: 0,
+        last_output: 'Agent created. Click Start to begin background schedule.'
+      };
+
+      try {
+        await invokeCmd('save_ai_agent', { agent: newAgent });
+        document.getElementById('agent-name').value = '';
+        document.getElementById('agent-prompt').value = '';
+        loadAgents();
+      } catch (err) {
+        alert("Failed to save agent: " + err);
+      }
+    }
+
+    async function toggleAgent(id, currentStatus) {
+      try {
+        const agents = await invokeCmd('get_ai_agents');
+        const agent = agents.find(a => a.id === id);
+        if (agent) {
+          agent.status = currentStatus === 'RUNNING' ? 'STOPPED' : 'RUNNING';
+          await invokeCmd('save_ai_agent', { agent });
+          loadAgents();
+        }
+      } catch (err) {
+        console.error("Toggle error:", err);
+      }
+    }
+
+    async function runAgentNow(id) {
+      try {
+        const agents = await invokeCmd('get_ai_agents');
+        const agent = agents.find(a => a.id === id);
+        if (!agent) return;
+
+        // Fetch feed data focused on target topic
+        let posts = await invokeCmd('fetch_feed', { limit: 15, activeRegion: 'global', feedMode: 'live' });
+        if (agent.target_topic && agent.target_topic !== 'general') {
+          posts = posts.filter(p => p.topic === agent.target_topic);
+        }
+
+        const fullPrompt = `${agent.prompt}\n\nFocused Feed Data (${agent.target_topic}):\n${JSON.stringify(posts)}`;
+        
+        const res = await invokeCmd('query_llm_inference', { req: { endpointUrl: agent.endpoint_url, model: agent.model, prompt: fullPrompt } });
+        
+        agent.last_output = res.response || "No response.";
+        agent.last_run = Math.floor(Date.now() / 1000);
+        await invokeCmd('save_ai_agent', { agent });
+        loadAgents();
+      } catch (err) {
+        alert("Agent execution failed: " + err);
+      }
+    }
+
+    async function deleteAgent(id) {
+      if (confirm("Delete this persistent AI agent?")) {
+        await invokeCmd('delete_ai_agent', { agentId: id });
+        loadAgents();
+      }
+    }
+
+    setInterval(loadAgents, 4000);
+    window.addEventListener('DOMContentLoaded', loadAgents);
+  </script>
+</body>
+</html>
